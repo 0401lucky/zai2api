@@ -10,6 +10,9 @@ from zai2api.zai_client import UpstreamResult
 
 
 class FakeUpstreamClient:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
     async def collect_prompt(
         self,
         *,
@@ -18,6 +21,14 @@ class FakeUpstreamClient:
         enable_thinking: bool,
         auto_web_search: bool,
     ) -> UpstreamResult:
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "model": model,
+                "enable_thinking": enable_thinking,
+                "auto_web_search": auto_web_search,
+            }
+        )
         return UpstreamResult(
             answer_text=f"echo:{prompt}",
             reasoning_text="fake reasoning",
@@ -74,12 +85,14 @@ def test_default_panel_password_login_flow(tmp_path: Path) -> None:
 
 
 def test_api_auth_is_disabled_by_default(tmp_path: Path) -> None:
-    app = create_app(make_settings(tmp_path), upstream_client=FakeUpstreamClient())
+    upstream = FakeUpstreamClient()
+    app = create_app(make_settings(tmp_path), upstream_client=upstream)
 
     with TestClient(app) as client:
         models = client.get("/v1/models")
         assert models.status_code == 200
-        assert models.json()["data"][0]["id"] == "glm-5"
+        model_ids = [item["id"] for item in models.json()["data"]]
+        assert model_ids == ["glm-5", "glm-5-nothinking"]
 
         response = client.post(
             "/v1/chat/completions",
@@ -87,6 +100,23 @@ def test_api_auth_is_disabled_by_default(tmp_path: Path) -> None:
         )
         assert response.status_code == 200
         assert response.json()["choices"][0]["message"]["content"].startswith("echo:")
+        assert upstream.calls[-1]["model"] == "glm-5"
+        assert upstream.calls[-1]["enable_thinking"] is True
+
+
+def test_nothinking_model_variant_disables_thinking(tmp_path: Path) -> None:
+    upstream = FakeUpstreamClient()
+    app = create_app(make_settings(tmp_path), upstream_client=upstream)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "glm-5-nothinking", "messages": [{"role": "user", "content": "hi"}]},
+        )
+        assert response.status_code == 200
+        assert response.json()["model"] == "glm-5-nothinking"
+        assert upstream.calls[-1]["model"] == "glm-5"
+        assert upstream.calls[-1]["enable_thinking"] is False
 
 
 def test_api_auth_rejects_missing_or_invalid_password(tmp_path: Path) -> None:

@@ -86,6 +86,9 @@ class AppServices:
     managed_upstream_client: ZAIClient | None
 
 
+NOTHINKING_MODEL_SUFFIX = "-nothinking"
+
+
 def create_app(
     app_settings: Settings | None = None,
     upstream_client: ZAIClient | None = None,
@@ -363,7 +366,8 @@ def create_app(
         current_services = get_services(request)
         enforce_api_password(request, current_services)
         payload = await request.json()
-        model = payload.get("model") or current_services.settings.default_model
+        requested_model = str(payload.get("model") or current_services.settings.default_model)
+        upstream_model, enable_thinking = resolve_model_request(requested_model)
         messages = payload.get("messages") or []
         stream = bool(payload.get("stream"))
         prompt = assemble_prompt(messages)
@@ -372,15 +376,21 @@ def create_app(
 
         if stream:
             return StreamingResponse(
-                stream_chat_completions(pool=current_services.prompt_pool, model=model, prompt=prompt),
+                stream_chat_completions(
+                    pool=current_services.prompt_pool,
+                    model=requested_model,
+                    upstream_model=upstream_model,
+                    prompt=prompt,
+                    enable_thinking=enable_thinking,
+                ),
                 media_type="text/event-stream",
             )
 
         try:
             upstream_result = await current_services.prompt_pool.collect_prompt(
                 prompt=prompt,
-                model=model,
-                enable_thinking=True,
+                model=upstream_model,
+                enable_thinking=enable_thinking,
                 auto_web_search=False,
             )
         except RuntimeError as exc:
@@ -393,7 +403,7 @@ def create_app(
             "id": make_chat_completion_id(),
             "object": "chat.completion",
             "created": int(time.time()),
-            "model": model,
+            "model": requested_model,
             "choices": [
                 {
                     "index": 0,
@@ -414,7 +424,8 @@ def create_app(
         current_services = get_services(request)
         enforce_api_password(request, current_services)
         payload = await request.json()
-        model = payload.get("model") or current_services.settings.default_model
+        requested_model = str(payload.get("model") or current_services.settings.default_model)
+        upstream_model, enable_thinking = resolve_model_request(requested_model)
         stream = bool(payload.get("stream"))
         prompt = assemble_responses_prompt(payload)
         if not prompt:
@@ -422,15 +433,21 @@ def create_app(
 
         if stream:
             return StreamingResponse(
-                stream_responses(pool=current_services.prompt_pool, model=model, prompt=prompt),
+                stream_responses(
+                    pool=current_services.prompt_pool,
+                    model=requested_model,
+                    upstream_model=upstream_model,
+                    prompt=prompt,
+                    enable_thinking=enable_thinking,
+                ),
                 media_type="text/event-stream",
             )
 
         try:
             upstream_result = await current_services.prompt_pool.collect_prompt(
                 prompt=prompt,
-                model=model,
-                enable_thinking=True,
+                model=upstream_model,
+                enable_thinking=enable_thinking,
                 auto_web_search=False,
             )
         except RuntimeError as exc:
@@ -443,7 +460,7 @@ def create_app(
             "id": make_response_id(),
             "object": "response",
             "status": "completed",
-            "model": model,
+            "model": requested_model,
             "output": build_responses_output(
                 answer_text=upstream_result.answer_text,
                 reasoning_text=upstream_result.reasoning_text,
@@ -463,7 +480,9 @@ async def stream_chat_completions(
     *,
     pool: SupportsPromptPool,
     model: str,
+    upstream_model: str,
     prompt: str,
+    enable_thinking: bool,
 ) -> AsyncIterator[bytes]:
     completion_id = make_chat_completion_id()
     created = int(time.time())
@@ -482,8 +501,8 @@ async def stream_chat_completions(
     try:
         async for chunk in pool.stream_prompt(
             prompt=prompt,
-            model=model,
-            enable_thinking=True,
+            model=upstream_model,
+            enable_thinking=enable_thinking,
             auto_web_search=False,
         ):
             if chunk.error:
@@ -530,7 +549,9 @@ async def stream_responses(
     *,
     pool: SupportsPromptPool,
     model: str,
+    upstream_model: str,
     prompt: str,
+    enable_thinking: bool,
 ) -> AsyncIterator[bytes]:
     response_id = make_response_id()
     created = int(time.time())
@@ -570,8 +591,8 @@ async def stream_responses(
     try:
         async for chunk in pool.stream_prompt(
             prompt=prompt,
-            model=model,
-            enable_thinking=True,
+            model=upstream_model,
+            enable_thinking=enable_thinking,
             auto_web_search=False,
         ):
             if chunk.error:
@@ -832,7 +853,15 @@ def serialize_security_settings(services: AppServices) -> dict[str, Any]:
 
 
 def available_models(services: AppServices) -> list[str]:
-    return [services.settings.default_model]
+    default_model = services.settings.default_model
+    return [default_model, f"{default_model}{NOTHINKING_MODEL_SUFFIX}"]
+
+
+def resolve_model_request(requested_model: str) -> tuple[str, bool]:
+    if requested_model.endswith(NOTHINKING_MODEL_SUFFIX):
+        upstream_model = requested_model[: -len(NOTHINKING_MODEL_SUFFIX)] or requested_model
+        return upstream_model, False
+    return requested_model, True
 
 
 def mask_secret(secret: str | None, prefix: int = 6, suffix: int = 4) -> str | None:
@@ -904,4 +933,3 @@ def make_chat_completion_id() -> str:
 
 def make_response_id() -> str:
     return f"resp_{uuid.uuid4().hex}"
-
