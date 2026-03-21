@@ -1,0 +1,34 @@
+# Analysis and local specs (not part of committed project)
+docs/
+analysis/
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Python-generated files
+__pycache__/
+*.py[oc]
+*.pyo
+*.pyd
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Build artifacts
+build/
+dist/
+wheels/
+*.egg-info/
+
+# Virtual environments
+.venv/
+
+# IDE / OS files
+.DS_Store
+.idea/
+.vscode/
