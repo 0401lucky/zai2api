@@ -8,7 +8,7 @@ import httpx
 
 from .config import Settings
 from .db import AccountRecord, Database
-from .zai_client import SessionState, UpstreamChunk, UpstreamResult, ZAIClient
+from .zai_client import SessionState, UpstreamResult, ZAIClient
 
 
 class SupportsZAIClient(Protocol):
@@ -95,6 +95,72 @@ class AccountPool:
 
     def list_accounts(self) -> list[AccountRecord]:
         return self.db.list_accounts()
+
+
+    def get_account(self, account_id: int) -> AccountRecord | None:
+        return self.db.get_account(account_id)
+
+    def set_account_enabled(self, account_id: int, enabled: bool) -> AccountRecord:
+        account = self.db.get_account(account_id)
+        if account is None:
+            raise RuntimeError(f"Account {account_id} not found")
+        self.db.set_account_enabled(account_id, enabled)
+        self.db.add_log(
+            level="info",
+            category="accounts",
+            message="Updated account enabled state",
+            details={"account_id": account_id, "enabled": enabled},
+        )
+        updated = self.db.get_account(account_id)
+        if updated is None:
+            raise RuntimeError(f"Account {account_id} not found")
+        return updated
+
+    async def check_account(self, account_id: int) -> AccountRecord:
+        account = self.db.get_account(account_id)
+        if account is None:
+            raise RuntimeError(f"Account {account_id} not found")
+
+        routed = RoutedAccount(
+            account_id=account.id,
+            jwt=account.jwt,
+            session_token=account.session_token,
+            label=account.email or account.user_id or f"account-{account.id}",
+            persistent=True,
+        )
+        client = self._client_factory(account.jwt, account.session_token)
+        try:
+            session = await client.ensure_session(force_refresh=bool(account.jwt))
+            completion_version = await client.verify_completion_version()
+            if completion_version != 2:
+                raise RuntimeError(f"Unsupported Z.ai completion_version={completion_version}")
+            self.db.mark_account_success(
+                account.id,
+                session_token=session.token,
+                name=session.name,
+                email=session.email,
+            )
+            self.db.add_log(
+                level="info",
+                category="accounts",
+                message="Account health check succeeded",
+                details={"account_id": account.id, "email": session.email},
+            )
+        except Exception as exc:
+            await self._handle_failure(routed, exc)
+        finally:
+            await client.aclose()
+
+        updated = self.db.get_account(account_id)
+        if updated is None:
+            raise RuntimeError(f"Account {account_id} not found")
+        return updated
+
+    async def check_all_accounts(self) -> list[AccountRecord]:
+        results: list[AccountRecord] = []
+        for account in self.db.list_accounts(enabled_only=True):
+            results.append(await self.check_account(account.id))
+        return results
 
     async def collect_prompt(
         self,
@@ -220,6 +286,8 @@ class AccountPool:
     def _should_disable(self, error: Exception) -> bool:
         if isinstance(error, httpx.HTTPStatusError):
             return error.response.status_code == 401
+        if isinstance(error, RuntimeError):
+            return "Missing ZAI_JWT or ZAI_SESSION_TOKEN" in str(error)
         return False
 
     def _describe_error(self, error: Exception) -> str:

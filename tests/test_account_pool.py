@@ -169,3 +169,47 @@ def test_account_pool_disables_unauthorized_account(tmp_path: Path) -> None:
     assert bad_account is not None
     assert bad_account.enabled is False
     assert bad_account.status == "invalid"
+
+
+def test_register_jwt_persists_account(tmp_path: Path) -> None:
+    settings = make_settings(tmp_path)
+    db = Database(settings.database_path)
+    db.initialize()
+
+    def client_factory(jwt: str | None, session_token: str | None) -> FakeClient:
+        assert jwt == "fresh-jwt"
+        return FakeClient(name="fresh", answer="fresh")
+
+    pool = AccountPool(settings, db, client_factory=client_factory)
+    account = asyncio.run(pool.register_jwt("fresh-jwt"))
+
+    assert account.user_id == "user-fresh"
+    assert account.session_token == "session-fresh"
+    assert db.count_accounts() == 1
+
+
+def test_check_account_can_reenable_account(tmp_path: Path) -> None:
+    settings = make_settings(tmp_path)
+    db = Database(settings.database_path)
+    db.initialize()
+    account = db.upsert_account(
+        jwt="jwt-a",
+        session_token="token-a",
+        user_id="user-a",
+        email="a@example.com",
+        name="a",
+        enabled=False,
+        status="invalid",
+        last_error="HTTP 401",
+        failure_count=2,
+    )
+
+    def client_factory(jwt: str | None, session_token: str | None) -> FakeClient:
+        return FakeClient(name="a", answer="alpha")
+
+    pool = AccountPool(settings, db, client_factory=client_factory)
+    updated = asyncio.run(pool.check_account(account.id))
+
+    assert updated.enabled is True
+    assert updated.status == "active"
+    assert updated.failure_count == 0
