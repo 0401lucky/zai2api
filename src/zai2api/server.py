@@ -506,7 +506,14 @@ async def stream_chat_completions(
             auto_web_search=False,
         ):
             if chunk.error:
-                raise HTTPException(status_code=502, detail=chunk.error)
+                yield chat_stream_error_event(
+                    completion_id=completion_id,
+                    created=created,
+                    model=model,
+                    message=chunk.error,
+                )
+                yield b"data: [DONE]\n\n"
+                return
             if chunk.usage:
                 final_usage = normalize_usage(chunk.usage)
             if not chunk.text:
@@ -527,10 +534,14 @@ async def stream_chat_completions(
                 }
             )
     except RuntimeError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
+        yield chat_stream_error_event(
+            completion_id=completion_id,
+            created=created,
+            model=model,
+            message=str(exc),
+        )
+        yield b"data: [DONE]\n\n"
+        return
 
     yield sse_json(
         {
@@ -596,7 +607,14 @@ async def stream_responses(
             auto_web_search=False,
         ):
             if chunk.error:
-                raise HTTPException(status_code=502, detail=chunk.error)
+                yield response_stream_failed_event(
+                    response_id=response_id,
+                    created=created,
+                    model=model,
+                    message=chunk.error,
+                )
+                yield b"data: [DONE]\n\n"
+                return
             if chunk.usage:
                 usage = normalize_usage(chunk.usage)
                 final_usage = {
@@ -656,10 +674,14 @@ async def stream_responses(
                 }
             )
     except RuntimeError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
+        yield response_stream_failed_event(
+            response_id=response_id,
+            created=created,
+            model=model,
+            message=str(exc),
+        )
+        yield b"data: [DONE]\n\n"
+        return
 
     if reasoning_started:
         yield sse_json(
@@ -921,6 +943,54 @@ def build_responses_output(answer_text: str, reasoning_text: str) -> list[dict[s
         }
     )
     return output
+
+
+def chat_stream_error_event(
+    *,
+    completion_id: str,
+    created: int,
+    model: str,
+    message: str,
+) -> bytes:
+    return sse_json(
+        {
+            "error": {
+                "message": message,
+                "type": "upstream_error",
+                "code": "upstream_stream_error",
+            },
+            "id": completion_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+        }
+    )
+
+
+def response_stream_failed_event(
+    *,
+    response_id: str,
+    created: int,
+    model: str,
+    message: str,
+) -> bytes:
+    return sse_json(
+        {
+            "type": "response.failed",
+            "response": {
+                "id": response_id,
+                "object": "response",
+                "created": created,
+                "model": model,
+                "status": "failed",
+                "error": {
+                    "message": message,
+                    "type": "upstream_error",
+                    "code": "upstream_stream_error",
+                },
+            },
+        }
+    )
 
 
 def sse_json(payload: dict[str, Any]) -> bytes:
