@@ -339,6 +339,25 @@ def create_app(
         )
         return JSONResponse(serialize_security_settings(current_services))
 
+    @app.get("/v1/models")
+    async def list_models(request: Request) -> JSONResponse:
+        current_services = get_services(request)
+        enforce_api_password(request, current_services)
+        return JSONResponse(
+            {
+                "object": "list",
+                "data": [
+                    {
+                        "id": model,
+                        "object": "model",
+                        "created": 0,
+                        "owned_by": "zai2api",
+                    }
+                    for model in available_models(current_services)
+                ],
+            }
+        )
+
     @app.post("/v1/chat/completions")
     async def chat_completions(request: Request):
         current_services = get_services(request)
@@ -812,6 +831,10 @@ def serialize_security_settings(services: AppServices) -> dict[str, Any]:
     }
 
 
+def available_models(services: AppServices) -> list[str]:
+    return [services.settings.default_model]
+
+
 def mask_secret(secret: str | None, prefix: int = 6, suffix: int = 4) -> str | None:
     if secret is None:
         return None
@@ -881,5 +904,4 @@ def make_chat_completion_id() -> str:
 
 def make_response_id() -> str:
     return f"resp_{uuid.uuid4().hex}"
-
 

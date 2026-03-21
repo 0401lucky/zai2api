@@ -77,6 +77,10 @@ def test_api_auth_is_disabled_by_default(tmp_path: Path) -> None:
     app = create_app(make_settings(tmp_path), upstream_client=FakeUpstreamClient())
 
     with TestClient(app) as client:
+        models = client.get("/v1/models")
+        assert models.status_code == 200
+        assert models.json()["data"][0]["id"] == "glm-5"
+
         response = client.post(
             "/v1/chat/completions",
             json={"model": "glm-5", "messages": [{"role": "user", "content": "hi"}]},
@@ -92,6 +96,16 @@ def test_api_auth_rejects_missing_or_invalid_password(tmp_path: Path) -> None:
     )
 
     with TestClient(app) as client:
+        rejected_models = client.get("/v1/models")
+        assert rejected_models.status_code == 401
+
+        allowed_models = client.get(
+            "/v1/models",
+            headers={"authorization": "Bearer secret-key"},
+        )
+        assert allowed_models.status_code == 200
+        assert allowed_models.json()["data"][0]["owned_by"] == "zai2api"
+
         rejected = client.post(
             "/v1/responses",
             json={"model": "glm-5", "input": "hello"},
