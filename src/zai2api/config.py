@@ -9,6 +9,7 @@ ENV_FILE = ".env"
 DEFAULT_PANEL_PASSWORD = "123456"
 DEFAULT_ADMIN_COOKIE_NAME = "zai2api_admin_session"
 DEFAULT_DATABASE_PATH = "data/zai2api.db"
+DEFAULT_LOG_RETENTION_DAYS = 7
 
 
 def _load_dotenv_file(path: str = ENV_FILE) -> None:
@@ -59,6 +60,9 @@ class Settings:
         "on",
     }
     account_poll_interval_seconds: int = int(os.getenv("ACCOUNT_POLL_INTERVAL_SECONDS", "300"))
+    log_retention_days_env: int | None = (
+        int(value) if (value := os.getenv("LOG_RETENTION_DAYS")) is not None else None
+    )
 
     @property
     def admin_session_ttl_seconds(self) -> int:

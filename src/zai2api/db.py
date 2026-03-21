@@ -2,10 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import sqlite3
 import time
 from typing import Any
+
+from .config import DEFAULT_LOG_RETENTION_DAYS
+
+
+LOG_RETENTION_DAYS_KEY = "log_retention_days"
 
 
 @dataclass(slots=True)
@@ -324,15 +330,19 @@ class Database:
         details: dict[str, Any] | None = None,
     ) -> None:
         now = int(time.time())
+        cutoff = self._log_retention_cutoff(now)
         encoded_details = json.dumps(details, ensure_ascii=False) if details is not None else None
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO logs(created_at, level, category, message, details) VALUES (?, ?, ?, ?, ?)",
                 (now, level, category, message, encoded_details),
             )
+            self._delete_logs_before_conn(conn, cutoff)
 
     def list_logs(self, limit: int = 100) -> list[LogRecord]:
+        cutoff = self._log_retention_cutoff()
         with self._connect() as conn:
+            self._delete_logs_before_conn(conn, cutoff)
             rows = conn.execute(
                 "SELECT id, created_at, level, category, message, details FROM logs ORDER BY id DESC LIMIT ?",
                 (limit,),
@@ -350,6 +360,10 @@ class Database:
                 )
             )
         return records
+
+    def delete_logs_before(self, cutoff: int) -> int:
+        with self._connect() as conn:
+            return self._delete_logs_before_conn(conn, cutoff)
 
     def _find_existing_account_row(
         self,
@@ -384,6 +398,29 @@ class Database:
             created_at=int(row["created_at"]),
             updated_at=int(row["updated_at"]),
         )
+
+    def _delete_logs_before_conn(self, conn: sqlite3.Connection, cutoff: int) -> int:
+        cursor = conn.execute("DELETE FROM logs WHERE created_at < ?", (cutoff,))
+        return int(cursor.rowcount or 0)
+
+    def _log_retention_cutoff(self, now: int | None = None) -> int:
+        current = int(time.time()) if now is None else now
+        return current - (self._log_retention_days() * 86400)
+
+    def _log_retention_days(self) -> int:
+        env_value = os.getenv("LOG_RETENTION_DAYS")
+        if env_value is not None:
+            try:
+                return max(1, int(env_value))
+            except ValueError:
+                return DEFAULT_LOG_RETENTION_DAYS
+        stored_value = self.get_setting(LOG_RETENTION_DAYS_KEY)
+        if stored_value is not None:
+            try:
+                return max(1, int(stored_value))
+            except ValueError:
+                return DEFAULT_LOG_RETENTION_DAYS
+        return DEFAULT_LOG_RETENTION_DAYS
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path)
