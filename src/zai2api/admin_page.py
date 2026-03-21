@@ -1030,9 +1030,10 @@ def render_admin_page() -> str:
               }
 
               function securityView() {
-                const security = state.security || { panel_password: {}, api_password: {}, poll_interval_seconds: 0 };
+                const security = state.security || { panel_password: {}, api_password: {}, log_retention: {}, poll_interval_seconds: 0 };
                 const panel = security.panel_password || {};
                 const apiPassword = security.api_password || {};
+                const logRetention = security.log_retention || {};
                 return `
                   <section class="security-grid">
                     <article class="form-card">
@@ -1078,6 +1079,35 @@ def render_admin_page() -> str:
                         <div class="metric-label">Polling interval</div>
                         <div class="metric-value">${security.poll_interval_seconds ?? 0}s</div>
                         <div class="metric-copy">Configured background account health check interval.</div>
+                      </div>
+                    </article>
+
+                    <article class="form-card">
+                      <div class="view-header">
+                        <div>
+                          <h2>Log retention</h2>
+                          <p class="muted-copy">Control how long audit logs are kept in SQLite before old entries are cleaned up.</p>
+                        </div>
+                        ${statusBadge(true, logRetention.source || 'default')}
+                      </div>
+                      <div class="banner ${logRetention.overridden_by_env ? 'warn' : logRetention.default_active ? 'info' : 'info'}">
+                        ${logRetention.overridden_by_env
+                          ? 'Env value currently overrides the database-backed log retention setting.'
+                          : logRetention.default_active
+                            ? 'No explicit retention override is set. The active default retention is 7 days.'
+                            : 'Database-backed log retention is active.'}
+                      </div>
+                      <form id="log-retention-form" class="field-group">
+                        <label class="field-label" for="log-retention-days">Retention days</label>
+                        <input class="field-input" id="log-retention-days" type="number" min="1" step="1" value="${logRetention.days ?? 7}" required />
+                        <div class="inline-actions">
+                          <button class="primary-button" type="submit">Save retention</button>
+                        </div>
+                      </form>
+                      <div class="inline-card">
+                        <div class="metric-label">Current policy</div>
+                        <div class="metric-value">${logRetention.days ?? 7}d</div>
+                        <div class="metric-copy">Logs older than this window will be removed automatically.</div>
                       </div>
                     </article>
                   </section>
@@ -1298,6 +1328,31 @@ def render_admin_page() -> str:
                     await ensureViewData('security');
                   } catch (error) {
                     showToast(error.message || 'Failed to update API password.', 'error');
+                  } finally {
+                    submit.disabled = false;
+                  }
+                }
+
+                if (form.id === 'log-retention-form') {
+                  event.preventDefault();
+                  const input = form.querySelector('#log-retention-days');
+                  const submit = form.querySelector('button[type="submit"]');
+                  const days = Number.parseInt(input.value, 10);
+                  if (!Number.isFinite(days) || days < 1) {
+                    showToast('Log retention days must be at least 1.', 'warn');
+                    return;
+                  }
+                  submit.disabled = true;
+                  try {
+                    await api('/api/admin/settings/security', {
+                      method: 'POST',
+                      body: JSON.stringify({ log_retention_days: days }),
+                    });
+                    showToast('Log retention updated.', 'success');
+                    await refreshBootstrap(false);
+                    await ensureViewData('security');
+                  } catch (error) {
+                    showToast(error.message || 'Failed to update log retention.', 'error');
                   } finally {
                     submit.disabled = false;
                   }
