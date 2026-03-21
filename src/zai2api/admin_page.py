@@ -911,7 +911,7 @@ def render_admin_page() -> str:
                       <div class="view-header">
                         <div>
                           <h2>API password</h2>
-                          <p class="muted-copy">Control whether `/v1/*` requires a password and rotate that credential when needed.</p>
+                          <p class="muted-copy">Control whether <code>/v1/*</code> requires a password and rotate that credential when needed.</p>
                         </div>
                         ${statusBadge(apiPassword.enabled, apiPassword.source || 'disabled')}
                       </div>
