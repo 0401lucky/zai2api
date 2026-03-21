@@ -5,16 +5,73 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Protocol
 
-from fastapi import FastAPI, HTTPException, Request, Response, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
+from .account_pool import AccountPool
 from .auth import AuthService
 from .config import Settings, settings
 from .db import Database
 from .prompt_assembly import assemble_prompt
-from .zai_client import ZAIClient, normalize_usage
+from .zai_client import UpstreamResult, ZAIClient, normalize_usage
+
+
+class SupportsPromptPool(Protocol):
+    async def collect_prompt(
+        self,
+        *,
+        prompt: str,
+        model: str,
+        enable_thinking: bool,
+        auto_web_search: bool,
+    ) -> UpstreamResult: ...
+
+    async def stream_prompt(
+        self,
+        *,
+        prompt: str,
+        model: str,
+        enable_thinking: bool,
+        auto_web_search: bool,
+    ) -> AsyncIterator[Any]: ...
+
+
+class SingleClientPool:
+    def __init__(self, client: ZAIClient):
+        self.client = client
+
+    async def collect_prompt(
+        self,
+        *,
+        prompt: str,
+        model: str,
+        enable_thinking: bool,
+        auto_web_search: bool,
+    ) -> UpstreamResult:
+        return await self.client.collect_prompt(
+            prompt=prompt,
+            model=model,
+            enable_thinking=enable_thinking,
+            auto_web_search=auto_web_search,
+        )
+
+    async def stream_prompt(
+        self,
+        *,
+        prompt: str,
+        model: str,
+        enable_thinking: bool,
+        auto_web_search: bool,
+    ) -> AsyncIterator[Any]:
+        async for chunk in self.client.stream_prompt(
+            prompt=prompt,
+            model=model,
+            enable_thinking=enable_thinking,
+            auto_web_search=auto_web_search,
+        ):
+            yield chunk
 
 
 @dataclass(slots=True)
@@ -22,25 +79,34 @@ class AppServices:
     settings: Settings
     db: Database
     auth: AuthService
-    upstream_client: ZAIClient | None
+    prompt_pool: SupportsPromptPool
+    managed_upstream_client: ZAIClient | None
 
 
 def create_app(
     app_settings: Settings | None = None,
     upstream_client: ZAIClient | None = None,
+    prompt_pool: SupportsPromptPool | None = None,
 ) -> FastAPI:
     resolved_settings = app_settings or settings
     db = Database(resolved_settings.database_path)
     auth = AuthService(resolved_settings, db)
-    client = upstream_client
-    if client is None and (resolved_settings.zai_jwt or resolved_settings.zai_session_token):
-        client = ZAIClient(resolved_settings)
+
+    managed_upstream_client = upstream_client
+    if prompt_pool is None:
+        if managed_upstream_client is not None:
+            resolved_prompt_pool: SupportsPromptPool = SingleClientPool(managed_upstream_client)
+        else:
+            resolved_prompt_pool = AccountPool(resolved_settings, db)
+    else:
+        resolved_prompt_pool = prompt_pool
 
     services = AppServices(
         settings=resolved_settings,
         db=db,
         auth=auth,
-        upstream_client=client,
+        prompt_pool=resolved_prompt_pool,
+        managed_upstream_client=managed_upstream_client,
     )
 
     @asynccontextmanager
@@ -55,12 +121,13 @@ def create_app(
                 "database_path": services.settings.database_path,
                 "api_auth_enabled": services.auth.is_api_auth_enabled(),
                 "panel_password_source": services.auth.panel_password_source(),
+                "persisted_accounts": services.db.count_accounts(),
             },
         )
         app.state.services = services
         yield
-        if services.upstream_client is not None:
-            await services.upstream_client.aclose()
+        if services.managed_upstream_client is not None:
+            await services.managed_upstream_client.aclose()
 
     app = FastAPI(title="zai2api", lifespan=lifespan)
 
@@ -95,6 +162,15 @@ def create_app(
                 "api_password": {
                     "source": current_services.auth.api_password_source(),
                     "enabled": current_services.auth.is_api_auth_enabled(),
+                },
+                "accounts": {
+                    "persisted_total": current_services.db.count_accounts(),
+                    "persisted_enabled": current_services.db.count_accounts(enabled_only=True),
+                    "using_env_fallback": current_services.db.count_accounts(enabled_only=True) == 0
+                    and bool(
+                        current_services.settings.zai_jwt
+                        or current_services.settings.zai_session_token
+                    ),
                 },
                 "frontend_ready": False,
             }
@@ -159,6 +235,10 @@ def create_app(
                     "source": current_services.auth.api_password_source(),
                     "enabled": current_services.auth.is_api_auth_enabled(),
                 },
+                "accounts": {
+                    "persisted_total": current_services.db.count_accounts(),
+                    "persisted_enabled": current_services.db.count_accounts(enabled_only=True),
+                },
             }
         )
 
@@ -174,19 +254,25 @@ def create_app(
         if not prompt:
             raise HTTPException(status_code=400, detail="No prompt could be assembled from messages")
 
-        upstream = require_upstream_client(current_services)
         if stream:
             return StreamingResponse(
-                stream_chat_completions(client=upstream, model=model, prompt=prompt),
+                stream_chat_completions(pool=current_services.prompt_pool, model=model, prompt=prompt),
                 media_type="text/event-stream",
             )
 
-        upstream_result = await upstream.collect_prompt(
-            prompt=prompt,
-            model=model,
-            enable_thinking=True,
-            auto_web_search=False,
-        )
+        try:
+            upstream_result = await current_services.prompt_pool.collect_prompt(
+                prompt=prompt,
+                model=model,
+                enable_thinking=True,
+                auto_web_search=False,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+
         response = {
             "id": make_chat_completion_id(),
             "object": "chat.completion",
@@ -218,19 +304,25 @@ def create_app(
         if not prompt:
             raise HTTPException(status_code=400, detail="No prompt could be assembled from input")
 
-        upstream = require_upstream_client(current_services)
         if stream:
             return StreamingResponse(
-                stream_responses(client=upstream, model=model, prompt=prompt),
+                stream_responses(pool=current_services.prompt_pool, model=model, prompt=prompt),
                 media_type="text/event-stream",
             )
 
-        upstream_result = await upstream.collect_prompt(
-            prompt=prompt,
-            model=model,
-            enable_thinking=True,
-            auto_web_search=False,
-        )
+        try:
+            upstream_result = await current_services.prompt_pool.collect_prompt(
+                prompt=prompt,
+                model=model,
+                enable_thinking=True,
+                auto_web_search=False,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+
         response = {
             "id": make_response_id(),
             "object": "response",
@@ -251,7 +343,12 @@ def create_app(
     return app
 
 
-async def stream_chat_completions(*, client: ZAIClient, model: str, prompt: str) -> AsyncIterator[bytes]:
+async def stream_chat_completions(
+    *,
+    pool: SupportsPromptPool,
+    model: str,
+    prompt: str,
+) -> AsyncIterator[bytes]:
     completion_id = make_chat_completion_id()
     created = int(time.time())
     final_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
@@ -266,29 +363,39 @@ async def stream_chat_completions(*, client: ZAIClient, model: str, prompt: str)
         }
     )
 
-    async for chunk in client.stream_prompt(
-        prompt=prompt,
-        model=model,
-        enable_thinking=True,
-        auto_web_search=False,
-    ):
-        if chunk.error:
-            raise HTTPException(status_code=502, detail=chunk.error)
-        if chunk.usage:
-            final_usage = normalize_usage(chunk.usage)
-        if not chunk.text:
-            continue
+    try:
+        async for chunk in pool.stream_prompt(
+            prompt=prompt,
+            model=model,
+            enable_thinking=True,
+            auto_web_search=False,
+        ):
+            if chunk.error:
+                raise HTTPException(status_code=502, detail=chunk.error)
+            if chunk.usage:
+                final_usage = normalize_usage(chunk.usage)
+            if not chunk.text:
+                continue
 
-        delta = {"reasoning_content": chunk.text} if chunk.phase == "thinking" else {"content": chunk.text}
-        yield sse_json(
-            {
-                "id": completion_id,
-                "object": "chat.completion.chunk",
-                "created": created,
-                "model": model,
-                "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
-            }
-        )
+            delta = (
+                {"reasoning_content": chunk.text}
+                if chunk.phase == "thinking"
+                else {"content": chunk.text}
+            )
+            yield sse_json(
+                {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
+                }
+            )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
 
     yield sse_json(
         {
@@ -303,7 +410,12 @@ async def stream_chat_completions(*, client: ZAIClient, model: str, prompt: str)
     yield b"data: [DONE]\n\n"
 
 
-async def stream_responses(*, client: ZAIClient, model: str, prompt: str) -> AsyncIterator[bytes]:
+async def stream_responses(
+    *,
+    pool: SupportsPromptPool,
+    model: str,
+    prompt: str,
+) -> AsyncIterator[bytes]:
     response_id = make_response_id()
     created = int(time.time())
     reasoning_item_id = f"rs_{uuid.uuid4().hex}"
@@ -339,72 +451,78 @@ async def stream_responses(*, client: ZAIClient, model: str, prompt: str) -> Asy
         }
     )
 
-    async for chunk in client.stream_prompt(
-        prompt=prompt,
-        model=model,
-        enable_thinking=True,
-        auto_web_search=False,
-    ):
-        if chunk.error:
-            raise HTTPException(status_code=502, detail=chunk.error)
-        if chunk.usage:
-            usage = normalize_usage(chunk.usage)
-            final_usage = {
-                "input_tokens": usage["prompt_tokens"],
-                "output_tokens": usage["completion_tokens"],
-                "total_tokens": usage["total_tokens"],
-            }
-        if not chunk.text:
-            continue
+    try:
+        async for chunk in pool.stream_prompt(
+            prompt=prompt,
+            model=model,
+            enable_thinking=True,
+            auto_web_search=False,
+        ):
+            if chunk.error:
+                raise HTTPException(status_code=502, detail=chunk.error)
+            if chunk.usage:
+                usage = normalize_usage(chunk.usage)
+                final_usage = {
+                    "input_tokens": usage["prompt_tokens"],
+                    "output_tokens": usage["completion_tokens"],
+                    "total_tokens": usage["total_tokens"],
+                }
+            if not chunk.text:
+                continue
 
-        if chunk.phase == "thinking":
-            reasoning_parts.append(chunk.text)
-            if not reasoning_started:
-                reasoning_started = True
+            if chunk.phase == "thinking":
+                reasoning_parts.append(chunk.text)
+                if not reasoning_started:
+                    reasoning_started = True
+                    yield sse_json(
+                        {
+                            "type": "response.output_item.added",
+                            "output_index": 0,
+                            "item": {"id": reasoning_item_id, "type": "reasoning", "summary": []},
+                        }
+                    )
+                continue
+
+            answer_parts.append(chunk.text)
+            output_index = 1 if reasoning_started else 0
+            if not message_started:
+                message_started = True
                 yield sse_json(
                     {
                         "type": "response.output_item.added",
-                        "output_index": 0,
-                        "item": {"id": reasoning_item_id, "type": "reasoning", "summary": []},
+                        "output_index": output_index,
+                        "item": {
+                            "id": message_item_id,
+                            "type": "message",
+                            "role": "assistant",
+                            "status": "in_progress",
+                            "content": [],
+                        },
                     }
                 )
-            continue
-
-        answer_parts.append(chunk.text)
-        output_index = 1 if reasoning_started else 0
-        if not message_started:
-            message_started = True
+                yield sse_json(
+                    {
+                        "type": "response.content_part.added",
+                        "item_id": message_item_id,
+                        "output_index": output_index,
+                        "content_index": 0,
+                        "part": {"type": "output_text", "text": "", "annotations": []},
+                    }
+                )
             yield sse_json(
                 {
-                    "type": "response.output_item.added",
-                    "output_index": output_index,
-                    "item": {
-                        "id": message_item_id,
-                        "type": "message",
-                        "role": "assistant",
-                        "status": "in_progress",
-                        "content": [],
-                    },
-                }
-            )
-            yield sse_json(
-                {
-                    "type": "response.content_part.added",
+                    "type": "response.output_text.delta",
                     "item_id": message_item_id,
                     "output_index": output_index,
                     "content_index": 0,
-                    "part": {"type": "output_text", "text": "", "annotations": []},
+                    "delta": chunk.text,
                 }
             )
-        yield sse_json(
-            {
-                "type": "response.output_text.delta",
-                "item_id": message_item_id,
-                "output_index": output_index,
-                "content_index": 0,
-                "delta": chunk.text,
-            }
-        )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
 
     if reasoning_started:
         yield sse_json(
@@ -514,12 +632,6 @@ def enforce_api_password(request: Request, services: AppServices) -> None:
         details={"path": str(request.url.path)},
     )
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API password")
-
-
-def require_upstream_client(services: AppServices) -> ZAIClient:
-    if services.upstream_client is not None:
-        return services.upstream_client
-    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="No upstream account configured")
 
 
 def assemble_responses_prompt(payload: dict[str, Any]) -> str:
