@@ -4,26 +4,63 @@ import json
 import time
 import uuid
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Request, Response, status
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
-from .config import settings
+from .auth import AuthService
+from .config import Settings, settings
+from .db import Database
 from .prompt_assembly import assemble_prompt
 from .zai_client import ZAIClient, normalize_usage
 
 
-def create_app() -> FastAPI:
-    client = ZAIClient(settings)
+@dataclass(slots=True)
+class AppServices:
+    settings: Settings
+    db: Database
+    auth: AuthService
+    upstream_client: ZAIClient | None
+
+
+def create_app(
+    app_settings: Settings | None = None,
+    upstream_client: ZAIClient | None = None,
+) -> FastAPI:
+    resolved_settings = app_settings or settings
+    db = Database(resolved_settings.database_path)
+    auth = AuthService(resolved_settings, db)
+    client = upstream_client
+    if client is None and (resolved_settings.zai_jwt or resolved_settings.zai_session_token):
+        client = ZAIClient(resolved_settings)
+
+    services = AppServices(
+        settings=resolved_settings,
+        db=db,
+        auth=auth,
+        upstream_client=client,
+    )
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI):
-        completion_version = await client.verify_completion_version()
-        if completion_version != 2:
-            raise RuntimeError(f"Unsupported Z.ai completion_version={completion_version}")
+    async def lifespan(app: FastAPI):
+        services.db.initialize()
+        services.db.delete_expired_admin_sessions()
+        services.db.add_log(
+            level="info",
+            category="startup",
+            message="Application started",
+            details={
+                "database_path": services.settings.database_path,
+                "api_auth_enabled": services.auth.is_api_auth_enabled(),
+                "panel_password_source": services.auth.panel_password_source(),
+            },
+        )
+        app.state.services = services
         yield
-        await client.aclose()
+        if services.upstream_client is not None:
+            await services.upstream_client.aclose()
 
     app = FastAPI(title="zai2api", lifespan=lifespan)
 
@@ -31,29 +68,125 @@ def create_app() -> FastAPI:
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/")
+    async def root(request: Request) -> HTMLResponse:
+        current_services = get_services(request)
+        is_logged_in = current_services.auth.verify_admin_session(
+            request.cookies.get(current_services.settings.admin_cookie_name)
+        )
+        if is_logged_in:
+            return HTMLResponse(render_logged_in_placeholder())
+        return HTMLResponse(render_login_placeholder())
+
+    @app.get("/api/admin/bootstrap")
+    async def admin_bootstrap(request: Request) -> JSONResponse:
+        current_services = get_services(request)
+        logged_in = current_services.auth.verify_admin_session(
+            request.cookies.get(current_services.settings.admin_cookie_name)
+        )
+        return JSONResponse(
+            {
+                "logged_in": logged_in,
+                "panel_password": {
+                    "source": current_services.auth.panel_password_source(),
+                    "default_password_active": current_services.auth.panel_password_source()
+                    == "default",
+                },
+                "api_password": {
+                    "source": current_services.auth.api_password_source(),
+                    "enabled": current_services.auth.is_api_auth_enabled(),
+                },
+                "frontend_ready": False,
+            }
+        )
+
+    @app.post("/api/admin/login")
+    async def admin_login(request: Request) -> JSONResponse:
+        current_services = get_services(request)
+        payload = await request.json()
+        password = str(payload.get("password") or "")
+        if not current_services.auth.verify_panel_password(password):
+            current_services.db.add_log(
+                level="warning",
+                category="admin_auth",
+                message="Admin login failed",
+            )
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid password")
+
+        session_id, expires_at = current_services.auth.create_admin_session()
+        current_services.db.add_log(
+            level="info",
+            category="admin_auth",
+            message="Admin login succeeded",
+            details={"expires_at": expires_at},
+        )
+        response = JSONResponse({"ok": True, "expires_at": expires_at})
+        response.set_cookie(
+            key=current_services.settings.admin_cookie_name,
+            value=session_id,
+            httponly=True,
+            samesite="lax",
+            secure=current_services.settings.admin_cookie_secure,
+            max_age=current_services.settings.admin_session_ttl_seconds,
+            expires=current_services.settings.admin_session_ttl_seconds,
+            path="/",
+        )
+        return response
+
+    @app.post("/api/admin/logout")
+    async def admin_logout(request: Request) -> JSONResponse:
+        current_services = get_services(request)
+        session_id = request.cookies.get(current_services.settings.admin_cookie_name)
+        current_services.auth.delete_admin_session(session_id)
+        current_services.db.add_log(
+            level="info",
+            category="admin_auth",
+            message="Admin logged out",
+        )
+        response = JSONResponse({"ok": True})
+        response.delete_cookie(current_services.settings.admin_cookie_name, path="/")
+        return response
+
+    @app.get("/api/admin/session")
+    async def admin_session(request: Request) -> JSONResponse:
+        current_services = get_services(request)
+        require_admin_session(request, current_services)
+        return JSONResponse(
+            {
+                "authenticated": True,
+                "panel_password_source": current_services.auth.panel_password_source(),
+                "api_password": {
+                    "source": current_services.auth.api_password_source(),
+                    "enabled": current_services.auth.is_api_auth_enabled(),
+                },
+            }
+        )
+
     @app.post("/v1/chat/completions")
     async def chat_completions(request: Request):
+        current_services = get_services(request)
+        enforce_api_password(request, current_services)
         payload = await request.json()
-        model = payload.get("model") or settings.default_model
+        model = payload.get("model") or current_services.settings.default_model
         messages = payload.get("messages") or []
         stream = bool(payload.get("stream"))
         prompt = assemble_prompt(messages)
         if not prompt:
             raise HTTPException(status_code=400, detail="No prompt could be assembled from messages")
 
+        upstream = require_upstream_client(current_services)
         if stream:
             return StreamingResponse(
-                stream_chat_completions(client=client, model=model, prompt=prompt),
+                stream_chat_completions(client=upstream, model=model, prompt=prompt),
                 media_type="text/event-stream",
             )
 
-        upstream = await client.collect_prompt(
+        upstream_result = await upstream.collect_prompt(
             prompt=prompt,
             model=model,
             enable_thinking=True,
             auto_web_search=False,
         )
-        usage = upstream.usage
         response = {
             "id": make_chat_completion_id(),
             "object": "chat.completion",
@@ -64,32 +197,35 @@ def create_app() -> FastAPI:
                     "index": 0,
                     "message": {
                         "role": "assistant",
-                        "content": upstream.answer_text,
-                        "reasoning_content": upstream.reasoning_text,
+                        "content": upstream_result.answer_text,
+                        "reasoning_content": upstream_result.reasoning_text,
                     },
-                    "finish_reason": upstream.finish_reason,
+                    "finish_reason": upstream_result.finish_reason,
                 }
             ],
-            "usage": usage,
+            "usage": upstream_result.usage,
         }
         return JSONResponse(response)
 
     @app.post("/v1/responses")
     async def responses_api(request: Request):
+        current_services = get_services(request)
+        enforce_api_password(request, current_services)
         payload = await request.json()
-        model = payload.get("model") or settings.default_model
+        model = payload.get("model") or current_services.settings.default_model
         stream = bool(payload.get("stream"))
         prompt = assemble_responses_prompt(payload)
         if not prompt:
             raise HTTPException(status_code=400, detail="No prompt could be assembled from input")
 
+        upstream = require_upstream_client(current_services)
         if stream:
             return StreamingResponse(
-                stream_responses(client=client, model=model, prompt=prompt),
+                stream_responses(client=upstream, model=model, prompt=prompt),
                 media_type="text/event-stream",
             )
 
-        upstream = await client.collect_prompt(
+        upstream_result = await upstream.collect_prompt(
             prompt=prompt,
             model=model,
             enable_thinking=True,
@@ -101,20 +237,16 @@ def create_app() -> FastAPI:
             "status": "completed",
             "model": model,
             "output": build_responses_output(
-                answer_text=upstream.answer_text,
-                reasoning_text=upstream.reasoning_text,
+                answer_text=upstream_result.answer_text,
+                reasoning_text=upstream_result.reasoning_text,
             ),
             "usage": {
-                "input_tokens": upstream.usage["prompt_tokens"],
-                "output_tokens": upstream.usage["completion_tokens"],
-                "total_tokens": upstream.usage["total_tokens"],
+                "input_tokens": upstream_result.usage["prompt_tokens"],
+                "output_tokens": upstream_result.usage["completion_tokens"],
+                "total_tokens": upstream_result.usage["total_tokens"],
             },
         }
         return JSONResponse(response)
-
-    @app.get("/")
-    async def root() -> PlainTextResponse:
-        return PlainTextResponse("zai2api is running")
 
     return app
 
@@ -122,8 +254,6 @@ def create_app() -> FastAPI:
 async def stream_chat_completions(*, client: ZAIClient, model: str, prompt: str) -> AsyncIterator[bytes]:
     completion_id = make_chat_completion_id()
     created = int(time.time())
-    answer_parts: list[str] = []
-    reasoning_parts: list[str] = []
     final_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     yield sse_json(
@@ -149,13 +279,7 @@ async def stream_chat_completions(*, client: ZAIClient, model: str, prompt: str)
         if not chunk.text:
             continue
 
-        if chunk.phase == "thinking":
-            reasoning_parts.append(chunk.text)
-            delta = {"reasoning_content": chunk.text}
-        else:
-            answer_parts.append(chunk.text)
-            delta = {"content": chunk.text}
-
+        delta = {"reasoning_content": chunk.text} if chunk.phase == "thinking" else {"content": chunk.text}
         yield sse_json(
             {
                 "id": completion_id,
@@ -190,8 +314,30 @@ async def stream_responses(*, client: ZAIClient, model: str, prompt: str) -> Asy
     reasoning_parts: list[str] = []
     answer_parts: list[str] = []
 
-    yield sse_json({"type": "response.created", "response": {"id": response_id, "object": "response", "created": created, "model": model, "status": "in_progress"}})
-    yield sse_json({"type": "response.in_progress", "response": {"id": response_id, "object": "response", "created": created, "model": model, "status": "in_progress"}})
+    yield sse_json(
+        {
+            "type": "response.created",
+            "response": {
+                "id": response_id,
+                "object": "response",
+                "created": created,
+                "model": model,
+                "status": "in_progress",
+            },
+        }
+    )
+    yield sse_json(
+        {
+            "type": "response.in_progress",
+            "response": {
+                "id": response_id,
+                "object": "response",
+                "created": created,
+                "model": model,
+                "status": "in_progress",
+            },
+        }
+    )
 
     async for chunk in client.stream_prompt(
         prompt=prompt,
@@ -215,42 +361,122 @@ async def stream_responses(*, client: ZAIClient, model: str, prompt: str) -> Asy
             reasoning_parts.append(chunk.text)
             if not reasoning_started:
                 reasoning_started = True
-                yield sse_json({"type": "response.output_item.added", "output_index": 0, "item": {"id": reasoning_item_id, "type": "reasoning", "summary": []}})
+                yield sse_json(
+                    {
+                        "type": "response.output_item.added",
+                        "output_index": 0,
+                        "item": {"id": reasoning_item_id, "type": "reasoning", "summary": []},
+                    }
+                )
             continue
 
         answer_parts.append(chunk.text)
+        output_index = 1 if reasoning_started else 0
         if not message_started:
             message_started = True
-            message_item = {
+            yield sse_json(
+                {
+                    "type": "response.output_item.added",
+                    "output_index": output_index,
+                    "item": {
+                        "id": message_item_id,
+                        "type": "message",
+                        "role": "assistant",
+                        "status": "in_progress",
+                        "content": [],
+                    },
+                }
+            )
+            yield sse_json(
+                {
+                    "type": "response.content_part.added",
+                    "item_id": message_item_id,
+                    "output_index": output_index,
+                    "content_index": 0,
+                    "part": {"type": "output_text", "text": "", "annotations": []},
+                }
+            )
+        yield sse_json(
+            {
+                "type": "response.output_text.delta",
+                "item_id": message_item_id,
+                "output_index": output_index,
+                "content_index": 0,
+                "delta": chunk.text,
+            }
+        )
+
+    if reasoning_started:
+        yield sse_json(
+            {
+                "type": "response.output_item.done",
+                "output_index": 0,
+                "item": {
+                    "id": reasoning_item_id,
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "".join(reasoning_parts)}],
+                },
+            }
+        )
+
+    output_index = 1 if reasoning_started else 0
+    if not message_started:
+        message_started = True
+        yield sse_json(
+            {
+                "type": "response.output_item.added",
+                "output_index": output_index,
+                "item": {
+                    "id": message_item_id,
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "in_progress",
+                    "content": [],
+                },
+            }
+        )
+        yield sse_json(
+            {
+                "type": "response.content_part.added",
+                "item_id": message_item_id,
+                "output_index": output_index,
+                "content_index": 0,
+                "part": {"type": "output_text", "text": "", "annotations": []},
+            }
+        )
+
+    final_answer = "".join(answer_parts)
+    yield sse_json(
+        {
+            "type": "response.output_text.done",
+            "item_id": message_item_id,
+            "output_index": output_index,
+            "content_index": 0,
+            "text": final_answer,
+        }
+    )
+    yield sse_json(
+        {
+            "type": "response.content_part.done",
+            "item_id": message_item_id,
+            "output_index": output_index,
+            "content_index": 0,
+            "part": {"type": "output_text", "text": final_answer, "annotations": []},
+        }
+    )
+    yield sse_json(
+        {
+            "type": "response.output_item.done",
+            "output_index": output_index,
+            "item": {
                 "id": message_item_id,
                 "type": "message",
                 "role": "assistant",
-                "status": "in_progress",
-                "content": [],
-            }
-            yield sse_json({"type": "response.output_item.added", "output_index": 1 if reasoning_started else 0, "item": message_item})
-            yield sse_json({"type": "response.content_part.added", "item_id": message_item_id, "output_index": 1 if reasoning_started else 0, "content_index": 0, "part": {"type": "output_text", "text": "", "annotations": []}})
-        yield sse_json({"type": "response.output_text.delta", "item_id": message_item_id, "output_index": 1 if reasoning_started else 0, "content_index": 0, "delta": chunk.text})
-
-    if reasoning_started:
-        yield sse_json({"type": "response.output_item.done", "output_index": 0, "item": {"id": reasoning_item_id, "type": "reasoning", "summary": [{"type": "summary_text", "text": "".join(reasoning_parts)}]}})
-
-    if not message_started:
-        message_started = True
-        empty_message = {
-            "id": message_item_id,
-            "type": "message",
-            "role": "assistant",
-            "status": "in_progress",
-            "content": [],
+                "status": "completed",
+                "content": [{"type": "output_text", "text": final_answer, "annotations": []}],
+            },
         }
-        yield sse_json({"type": "response.output_item.added", "output_index": 1 if reasoning_started else 0, "item": empty_message})
-        yield sse_json({"type": "response.content_part.added", "item_id": message_item_id, "output_index": 1 if reasoning_started else 0, "content_index": 0, "part": {"type": "output_text", "text": "", "annotations": []}})
-
-    final_answer = "".join(answer_parts)
-    yield sse_json({"type": "response.output_text.done", "item_id": message_item_id, "output_index": 1 if reasoning_started else 0, "content_index": 0, "text": final_answer})
-    yield sse_json({"type": "response.content_part.done", "item_id": message_item_id, "output_index": 1 if reasoning_started else 0, "content_index": 0, "part": {"type": "output_text", "text": final_answer, "annotations": []}})
-    yield sse_json({"type": "response.output_item.done", "output_index": 1 if reasoning_started else 0, "item": {"id": message_item_id, "type": "message", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": final_answer, "annotations": []}]}})
+    )
 
     completed = {
         "id": response_id,
@@ -262,6 +488,38 @@ async def stream_responses(*, client: ZAIClient, model: str, prompt: str) -> Asy
     }
     yield sse_json({"type": "response.completed", "response": completed})
     yield b"data: [DONE]\n\n"
+
+
+def get_services(request: Request) -> AppServices:
+    return request.app.state.services  # type: ignore[return-value]
+
+
+def require_admin_session(request: Request, services: AppServices) -> None:
+    session_id = request.cookies.get(services.settings.admin_cookie_name)
+    if services.auth.verify_admin_session(session_id):
+        return
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin authentication required")
+
+
+def enforce_api_password(request: Request, services: AppServices) -> None:
+    if not services.auth.is_api_auth_enabled():
+        return
+    password = services.auth.extract_api_password(request)
+    if password and services.auth.verify_api_password(password):
+        return
+    services.db.add_log(
+        level="warning",
+        category="api_auth",
+        message="Rejected API request due to invalid API password",
+        details={"path": str(request.url.path)},
+    )
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API password")
+
+
+def require_upstream_client(services: AppServices) -> ZAIClient:
+    if services.upstream_client is not None:
+        return services.upstream_client
+    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="No upstream account configured")
 
 
 def assemble_responses_prompt(payload: dict[str, Any]) -> str:
@@ -325,3 +583,88 @@ def make_chat_completion_id() -> str:
 
 def make_response_id() -> str:
     return f"resp_{uuid.uuid4().hex}"
+
+
+def render_login_placeholder() -> str:
+    return """
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>zai2api admin</title>
+    <style>
+      body { font-family: sans-serif; margin: 40px; max-width: 480px; }
+      input, button { font-size: 16px; padding: 10px 12px; width: 100%; box-sizing: border-box; }
+      button { margin-top: 12px; cursor: pointer; }
+      .muted { color: #666; }
+      .status { margin-top: 16px; min-height: 20px; }
+    </style>
+  </head>
+  <body>
+    <h1>zai2api admin</h1>
+    <p class="muted">Frontend panel is not ready yet. Please authenticate to continue.</p>
+    <input id="password" type="password" placeholder="Panel password" />
+    <button id="login-button">Sign in</button>
+    <div class="status" id="status"></div>
+    <script>
+      const button = document.getElementById('login-button');
+      const password = document.getElementById('password');
+      const status = document.getElementById('status');
+      button.addEventListener('click', async () => {
+        status.textContent = 'Signing in...';
+        const response = await fetch('/api/admin/login', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ password: password.value })
+        });
+        if (response.ok) {
+          status.textContent = 'Signed in. Refreshing...';
+          window.location.reload();
+          return;
+        }
+        const payload = await response.json().catch(() => ({}));
+        status.textContent = payload.detail || 'Login failed';
+      });
+    </script>
+  </body>
+</html>
+    """.strip()
+
+
+def render_logged_in_placeholder() -> str:
+    return """
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>zai2api admin</title>
+    <style>
+      body { font-family: sans-serif; margin: 40px; max-width: 720px; }
+      button { font-size: 16px; padding: 10px 12px; cursor: pointer; }
+      pre { background: #f6f8fa; padding: 16px; border-radius: 8px; overflow: auto; }
+    </style>
+  </head>
+  <body>
+    <h1>zai2api admin</h1>
+    <p>Backend foundation is ready. Fluent-based dashboard will be added in a later phase.</p>
+    <p>
+      <button id="logout-button">Sign out</button>
+    </p>
+    <pre id="bootstrap">Loading bootstrap info...</pre>
+    <script>
+      async function loadBootstrap() {
+        const response = await fetch('/api/admin/bootstrap');
+        const payload = await response.json();
+        document.getElementById('bootstrap').textContent = JSON.stringify(payload, null, 2);
+      }
+      document.getElementById('logout-button').addEventListener('click', async () => {
+        await fetch('/api/admin/logout', { method: 'POST' });
+        window.location.reload();
+      });
+      loadBootstrap();
+    </script>
+  </body>
+</html>
+    """.strip()
