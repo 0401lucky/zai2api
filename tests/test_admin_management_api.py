@@ -140,3 +140,32 @@ def test_admin_can_update_security_settings_and_read_logs(tmp_path: Path) -> Non
         assert logs.status_code == 200
         messages = [item["message"] for item in logs.json()["logs"]]
         assert "Updated security settings" in messages
+
+
+def test_openai_requests_are_written_to_audit_logs(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        login(client)
+        added = client.post("/api/admin/accounts", json={"jwt": "jwt-alpha"})
+        assert added.status_code == 200
+
+        models = client.get("/v1/models")
+        assert models.status_code == 200
+
+        completion = client.post(
+            "/v1/chat/completions",
+            json={"model": "glm-5", "messages": [{"role": "user", "content": "hello"}]},
+        )
+        assert completion.status_code == 200
+
+        response_api = client.post(
+            "/v1/responses",
+            json={"model": "glm-5", "input": "hello"},
+        )
+        assert response_api.status_code == 200
+
+        logs = client.get("/api/admin/logs?limit=50")
+        assert logs.status_code == 200
+        messages = [item["message"] for item in logs.json()["logs"]]
+        assert "Listed available models" in messages
+        assert "Completed chat completion request" in messages
+        assert "Completed responses request" in messages

@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from zai2api.config import Settings
+from zai2api.db import Database
 from zai2api.server import create_app
 from zai2api.zai_client import UpstreamChunk
 
@@ -43,7 +44,8 @@ def make_settings(tmp_path: Path) -> Settings:
 
 
 def test_chat_completion_stream_reports_error_in_band(tmp_path: Path) -> None:
-    app = create_app(make_settings(tmp_path), prompt_pool=ErroringStreamPool(mode="chunk_error"))
+    settings = make_settings(tmp_path)
+    app = create_app(settings, prompt_pool=ErroringStreamPool(mode="chunk_error"))
 
     with TestClient(app) as client:
         response = client.post(
@@ -55,10 +57,13 @@ def test_chat_completion_stream_reports_error_in_band(tmp_path: Path) -> None:
     assert '"type": "upstream_error"' in response.text
     assert '"message": "upstream said no"' in response.text
     assert "data: [DONE]" in response.text
+    logs = Database(settings.database_path).list_logs(limit=20)
+    assert any(item.message == "Streaming chat completion request failed" for item in logs)
 
 
 def test_responses_stream_reports_runtime_error_in_band(tmp_path: Path) -> None:
-    app = create_app(make_settings(tmp_path), prompt_pool=ErroringStreamPool(mode="runtime_error"))
+    settings = make_settings(tmp_path)
+    app = create_app(settings, prompt_pool=ErroringStreamPool(mode="runtime_error"))
 
     with TestClient(app) as client:
         response = client.post(
@@ -71,3 +76,5 @@ def test_responses_stream_reports_runtime_error_in_band(tmp_path: Path) -> None:
     assert '"status": "failed"' in response.text
     assert '"message": "upstream stream exploded"' in response.text
     assert "data: [DONE]" in response.text
+    logs = Database(settings.database_path).list_logs(limit=20)
+    assert any(item.message == "Streaming responses request failed" for item in logs)

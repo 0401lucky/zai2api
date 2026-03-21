@@ -359,20 +359,28 @@ def create_app(
     async def list_models(request: Request) -> JSONResponse:
         current_services = get_services(request)
         enforce_api_password(request, current_services)
-        return JSONResponse(
-            {
-                "object": "list",
-                "data": [
-                    {
-                        "id": model,
-                        "object": "model",
-                        "created": 0,
-                        "owned_by": "zai2api",
-                    }
-                    for model in available_models(current_services)
-                ],
-            }
+        payload = {
+            "object": "list",
+            "data": [
+                {
+                    "id": model,
+                    "object": "model",
+                    "created": 0,
+                    "owned_by": "zai2api",
+                }
+                for model in available_models(current_services)
+            ],
+        }
+        current_services.db.add_log(
+            level="info",
+            category="requests",
+            message="Listed available models",
+            details={
+                "path": str(request.url.path),
+                "model_count": len(payload["data"]),
+            },
         )
+        return JSONResponse(payload)
 
     @app.post("/v1/chat/completions")
     async def chat_completions(request: Request):
@@ -390,6 +398,7 @@ def create_app(
         if stream:
             return StreamingResponse(
                 stream_chat_completions(
+                    db=current_services.db,
                     pool=current_services.prompt_pool,
                     model=requested_model,
                     upstream_model=upstream_model,
@@ -407,6 +416,18 @@ def create_app(
                 auto_web_search=False,
             )
         except RuntimeError as exc:
+            current_services.db.add_log(
+                level="warning",
+                category="requests",
+                message="Chat completion request failed",
+                details={
+                    "path": str(request.url.path),
+                    "model": requested_model,
+                    "stream": False,
+                    "enable_thinking": enable_thinking,
+                    "error": str(exc),
+                },
+            )
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=str(exc),
@@ -430,6 +451,21 @@ def create_app(
             ],
             "usage": upstream_result.usage,
         }
+        current_services.db.add_log(
+            level="info",
+            category="requests",
+            message="Completed chat completion request",
+            details={
+                "path": str(request.url.path),
+                "model": requested_model,
+                "stream": False,
+                "enable_thinking": enable_thinking,
+                "prompt_chars": len(prompt),
+                "answer_chars": len(upstream_result.answer_text),
+                "reasoning_chars": len(upstream_result.reasoning_text),
+                "total_tokens": upstream_result.usage["total_tokens"],
+            },
+        )
         return JSONResponse(response)
 
     @app.post("/v1/responses")
@@ -447,6 +483,7 @@ def create_app(
         if stream:
             return StreamingResponse(
                 stream_responses(
+                    db=current_services.db,
                     pool=current_services.prompt_pool,
                     model=requested_model,
                     upstream_model=upstream_model,
@@ -464,6 +501,18 @@ def create_app(
                 auto_web_search=False,
             )
         except RuntimeError as exc:
+            current_services.db.add_log(
+                level="warning",
+                category="requests",
+                message="Responses request failed",
+                details={
+                    "path": str(request.url.path),
+                    "model": requested_model,
+                    "stream": False,
+                    "enable_thinking": enable_thinking,
+                    "error": str(exc),
+                },
+            )
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=str(exc),
@@ -484,6 +533,21 @@ def create_app(
                 "total_tokens": upstream_result.usage["total_tokens"],
             },
         }
+        current_services.db.add_log(
+            level="info",
+            category="requests",
+            message="Completed responses request",
+            details={
+                "path": str(request.url.path),
+                "model": requested_model,
+                "stream": False,
+                "enable_thinking": enable_thinking,
+                "prompt_chars": len(prompt),
+                "answer_chars": len(upstream_result.answer_text),
+                "reasoning_chars": len(upstream_result.reasoning_text),
+                "total_tokens": upstream_result.usage["total_tokens"],
+            },
+        )
         return JSONResponse(response)
 
     return app
@@ -491,6 +555,7 @@ def create_app(
 
 async def stream_chat_completions(
     *,
+    db: Database,
     pool: SupportsPromptPool,
     model: str,
     upstream_model: str,
@@ -500,6 +565,8 @@ async def stream_chat_completions(
     completion_id = make_chat_completion_id()
     created = int(time.time())
     final_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    answer_chars = 0
+    reasoning_chars = 0
 
     yield sse_json(
         {
@@ -519,6 +586,20 @@ async def stream_chat_completions(
             auto_web_search=False,
         ):
             if chunk.error:
+                db.add_log(
+                    level="warning",
+                    category="requests",
+                    message="Streaming chat completion request failed",
+                    details={
+                        "path": "/v1/chat/completions",
+                        "model": model,
+                        "stream": True,
+                        "enable_thinking": enable_thinking,
+                        "answer_chars": answer_chars,
+                        "reasoning_chars": reasoning_chars,
+                        "error": chunk.error,
+                    },
+                )
                 yield chat_stream_error_event(
                     completion_id=completion_id,
                     created=created,
@@ -537,6 +618,10 @@ async def stream_chat_completions(
                 if chunk.phase == "thinking"
                 else {"content": chunk.text}
             )
+            if chunk.phase == "thinking":
+                reasoning_chars += len(chunk.text)
+            else:
+                answer_chars += len(chunk.text)
             yield sse_json(
                 {
                     "id": completion_id,
@@ -547,6 +632,20 @@ async def stream_chat_completions(
                 }
             )
     except RuntimeError as exc:
+        db.add_log(
+            level="warning",
+            category="requests",
+            message="Streaming chat completion request failed",
+            details={
+                "path": "/v1/chat/completions",
+                "model": model,
+                "stream": True,
+                "enable_thinking": enable_thinking,
+                "answer_chars": answer_chars,
+                "reasoning_chars": reasoning_chars,
+                "error": str(exc),
+            },
+        )
         yield chat_stream_error_event(
             completion_id=completion_id,
             created=created,
@@ -566,11 +665,27 @@ async def stream_chat_completions(
             "usage": final_usage,
         }
     )
+    db.add_log(
+        level="info",
+        category="requests",
+        message="Completed streaming chat completion request",
+        details={
+            "path": "/v1/chat/completions",
+            "model": model,
+            "stream": True,
+            "enable_thinking": enable_thinking,
+            "prompt_chars": len(prompt),
+            "answer_chars": answer_chars,
+            "reasoning_chars": reasoning_chars,
+            "total_tokens": final_usage["total_tokens"],
+        },
+    )
     yield b"data: [DONE]\n\n"
 
 
 async def stream_responses(
     *,
+    db: Database,
     pool: SupportsPromptPool,
     model: str,
     upstream_model: str,
@@ -620,6 +735,20 @@ async def stream_responses(
             auto_web_search=False,
         ):
             if chunk.error:
+                db.add_log(
+                    level="warning",
+                    category="requests",
+                    message="Streaming responses request failed",
+                    details={
+                        "path": "/v1/responses",
+                        "model": model,
+                        "stream": True,
+                        "enable_thinking": enable_thinking,
+                        "answer_chars": len("".join(answer_parts)),
+                        "reasoning_chars": len("".join(reasoning_parts)),
+                        "error": chunk.error,
+                    },
+                )
                 yield response_stream_failed_event(
                     response_id=response_id,
                     created=created,
@@ -687,6 +816,20 @@ async def stream_responses(
                 }
             )
     except RuntimeError as exc:
+        db.add_log(
+            level="warning",
+            category="requests",
+            message="Streaming responses request failed",
+            details={
+                "path": "/v1/responses",
+                "model": model,
+                "stream": True,
+                "enable_thinking": enable_thinking,
+                "answer_chars": len("".join(answer_parts)),
+                "reasoning_chars": len("".join(reasoning_parts)),
+                "error": str(exc),
+            },
+        )
         yield response_stream_failed_event(
             response_id=response_id,
             created=created,
@@ -776,6 +919,21 @@ async def stream_responses(
         "output": build_responses_output(final_answer, "".join(reasoning_parts)),
         "usage": final_usage,
     }
+    db.add_log(
+        level="info",
+        category="requests",
+        message="Completed streaming responses request",
+        details={
+            "path": "/v1/responses",
+            "model": model,
+            "stream": True,
+            "enable_thinking": enable_thinking,
+            "prompt_chars": len(prompt),
+            "answer_chars": len(final_answer),
+            "reasoning_chars": len("".join(reasoning_parts)),
+            "total_tokens": final_usage["total_tokens"],
+        },
+    )
     yield sse_json({"type": "response.completed", "response": completed})
     yield b"data: [DONE]\n\n"
 
