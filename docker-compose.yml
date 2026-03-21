@@ -1,0 +1,17 @@
+services:
+  zai2api:
+    image: ${ZAI2API_IMAGE:-zai2api:local}
+    build:
+      context: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: ${PORT:?Set PORT in .env or the shell environment}
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:${HOST_PORT:?Set HOST_PORT in .env or the shell environment}:${PORT}"
+    volumes:
+      - type: bind
+        source: ${DATA_DIR:-./data}
+        target: /app/data
