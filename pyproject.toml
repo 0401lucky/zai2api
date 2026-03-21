@@ -1,13 +1,17 @@
 [project]
 name = "zai2api"
 version = "0.1.0"
-description = "Add your description here"
+description = "OpenAI-compatible completion server backed by Z.ai"
 readme = "README.md"
 authors = [
     { name = "orbitoo", email = "elbertoo001@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "fastapi>=0.135.1",
+    "httpx>=0.28.1",
+    "uvicorn>=0.42.0",
+]
 
 [project.scripts]
 zai2api = "zai2api:main"
@@ -15,3 +19,8 @@ zai2api = "zai2api:main"
 [build-system]
 requires = ["uv_build>=0.9.26,<0.10.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
