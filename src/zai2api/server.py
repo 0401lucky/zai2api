@@ -87,6 +87,12 @@ class AppServices:
 
 
 NOTHINKING_MODEL_SUFFIX = "-nothinking"
+PUBLIC_MODEL_ALIASES: dict[str, str] = {
+    "glm-5": "glm-5",
+    "glm-5.1": "GLM-5.1",
+    "glm-5-turbo": "GLM-5-Turbo",
+}
+UPSTREAM_MODEL_ALIASES: dict[str, str] = {upstream: public for public, upstream in PUBLIC_MODEL_ALIASES.items()}
 
 
 def create_app(
@@ -387,7 +393,9 @@ def create_app(
         current_services = get_services(request)
         enforce_api_password(request, current_services)
         payload = await request.json()
-        requested_model = str(payload.get("model") or current_services.settings.default_model)
+        requested_model = normalize_public_model_name(
+            str(payload.get("model") or current_services.settings.default_model)
+        )
         upstream_model, enable_thinking = resolve_model_request(requested_model)
         messages = payload.get("messages") or []
         stream = bool(payload.get("stream"))
@@ -473,7 +481,9 @@ def create_app(
         current_services = get_services(request)
         enforce_api_password(request, current_services)
         payload = await request.json()
-        requested_model = str(payload.get("model") or current_services.settings.default_model)
+        requested_model = normalize_public_model_name(
+            str(payload.get("model") or current_services.settings.default_model)
+        )
         upstream_model, enable_thinking = resolve_model_request(requested_model)
         stream = bool(payload.get("stream"))
         prompt = assemble_responses_prompt(payload)
@@ -1053,15 +1063,45 @@ def serialize_security_settings(services: AppServices) -> dict[str, Any]:
 
 
 def available_models(services: AppServices) -> list[str]:
-    default_model = services.settings.default_model
-    return [default_model, f"{default_model}{NOTHINKING_MODEL_SUFFIX}"]
+    models: list[str] = []
+    default_model = normalize_public_model_name(services.settings.default_model)
+    if default_model not in models:
+        models.append(default_model)
+    for model in PUBLIC_MODEL_ALIASES:
+        if model not in models:
+            models.append(model)
+    return [alias for model in models for alias in (model, f"{model}{NOTHINKING_MODEL_SUFFIX}")]
 
 
 def resolve_model_request(requested_model: str) -> tuple[str, bool]:
-    if requested_model.endswith(NOTHINKING_MODEL_SUFFIX):
-        upstream_model = requested_model[: -len(NOTHINKING_MODEL_SUFFIX)] or requested_model
-        return upstream_model, False
-    return requested_model, True
+    normalized_model = normalize_public_model_name(requested_model)
+    if normalized_model.endswith(NOTHINKING_MODEL_SUFFIX):
+        public_model = normalized_model[: -len(NOTHINKING_MODEL_SUFFIX)] or normalized_model
+        return public_to_upstream_model(public_model), False
+    return public_to_upstream_model(normalized_model), True
+
+
+def normalize_public_model_name(requested_model: str) -> str:
+    normalized_model = requested_model.strip()
+    if not normalized_model:
+        return "glm-5"
+    has_nothinking = normalized_model.lower().endswith(NOTHINKING_MODEL_SUFFIX)
+    base_model = normalized_model[: -len(NOTHINKING_MODEL_SUFFIX)] if has_nothinking else normalized_model
+    public_model = canonical_public_model_name(base_model)
+    if has_nothinking:
+        return f"{public_model}{NOTHINKING_MODEL_SUFFIX}"
+    return public_model
+
+
+def public_to_upstream_model(public_model: str) -> str:
+    return PUBLIC_MODEL_ALIASES.get(public_model, public_model)
+
+
+def canonical_public_model_name(requested_model: str) -> str:
+    lower_model = requested_model.lower()
+    if lower_model in PUBLIC_MODEL_ALIASES:
+        return lower_model
+    return UPSTREAM_MODEL_ALIASES.get(requested_model, requested_model)
 
 
 def current_log_retention_days(services: AppServices) -> int:

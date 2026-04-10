@@ -39,6 +39,7 @@ Default bind address is `0.0.0.0:8000`.
 - `ZAI_JWT`: preferred auth source; used to fetch a fresh session token
 - `ZAI_SESSION_TOKEN`: optional direct session token reuse
 - `DEFAULT_MODEL`: defaults to `glm-5`
+- Available public model ids: `glm-5`, `glm-5.1`, `glm-5-turbo` and their `-nothinking` variants
 - `HOST`: defaults to `0.0.0.0`
 - `PORT`: defaults to `8000`
 - `LOG_LEVEL`: defaults to `info`
