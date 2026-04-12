@@ -84,6 +84,15 @@ def test_default_panel_password_login_flow(tmp_path: Path) -> None:
         assert session.json()["authenticated"] is True
 
 
+def test_panel_login_rejects_invalid_password_with_chinese_detail(tmp_path: Path) -> None:
+    app = create_app(make_settings(tmp_path), upstream_client=FakeUpstreamClient())
+
+    with TestClient(app) as client:
+        login = client.post("/api/admin/login", json={"password": "bad-password"})
+        assert login.status_code == 401
+        assert login.json()["detail"] == "密码错误"
+
+
 def test_api_auth_is_disabled_by_default(tmp_path: Path) -> None:
     upstream = FakeUpstreamClient()
     app = create_app(make_settings(tmp_path), upstream_client=upstream)
@@ -92,7 +101,14 @@ def test_api_auth_is_disabled_by_default(tmp_path: Path) -> None:
         models = client.get("/v1/models")
         assert models.status_code == 200
         model_ids = [item["id"] for item in models.json()["data"]]
-        assert model_ids == ["glm-5", "glm-5-nothinking"]
+        assert model_ids == [
+            "glm-5",
+            "glm-5-nothinking",
+            "glm-5.1",
+            "glm-5.1-nothinking",
+            "glm-5-turbo",
+            "glm-5-turbo-nothinking",
+        ]
 
         response = client.post(
             "/v1/chat/completions",
@@ -128,6 +144,7 @@ def test_api_auth_rejects_missing_or_invalid_password(tmp_path: Path) -> None:
     with TestClient(app) as client:
         rejected_models = client.get("/v1/models")
         assert rejected_models.status_code == 401
+        assert rejected_models.json()["detail"] == "API 密码错误"
 
         allowed_models = client.get(
             "/v1/models",

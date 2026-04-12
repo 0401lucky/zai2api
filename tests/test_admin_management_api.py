@@ -113,6 +113,15 @@ def test_admin_can_add_list_and_toggle_accounts(tmp_path: Path) -> None:
         assert checked.json()["account"]["status"] == "active"
 
 
+def test_admin_add_account_requires_jwt_with_chinese_detail(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        login(client)
+
+        response = client.post("/api/admin/accounts", json={"jwt": ""})
+        assert response.status_code == 400
+        assert response.json()["detail"] == "缺少 JWT"
+
+
 def test_admin_can_update_security_settings_and_read_logs(tmp_path: Path) -> None:
     with build_client(tmp_path) as client:
         login(client)
@@ -139,7 +148,7 @@ def test_admin_can_update_security_settings_and_read_logs(tmp_path: Path) -> Non
         logs = client.get("/api/admin/logs?limit=20")
         assert logs.status_code == 200
         messages = [item["message"] for item in logs.json()["logs"]]
-        assert "Updated security settings" in messages
+        assert "已更新安全设置" in messages
 
 
 def test_openai_requests_are_written_to_audit_logs(tmp_path: Path) -> None:
@@ -166,6 +175,6 @@ def test_openai_requests_are_written_to_audit_logs(tmp_path: Path) -> None:
         logs = client.get("/api/admin/logs?limit=50")
         assert logs.status_code == 200
         messages = [item["message"] for item in logs.json()["logs"]]
-        assert "Listed available models" in messages
-        assert "Completed chat completion request" in messages
-        assert "Completed responses request" in messages
+        assert "已列出可用模型" in messages
+        assert "聊天补全请求已完成" in messages
+        assert "Responses 请求已完成" in messages

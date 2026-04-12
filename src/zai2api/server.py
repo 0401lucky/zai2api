@@ -138,7 +138,7 @@ def create_app(
         services.db.add_log(
             level="info",
             category="startup",
-            message="Application started",
+            message="应用已启动",
             details={
                 "database_path": services.settings.database_path,
                 "api_auth_enabled": services.auth.is_api_auth_enabled(),
@@ -208,15 +208,15 @@ def create_app(
             current_services.db.add_log(
                 level="warning",
                 category="admin_auth",
-                message="Admin login failed",
+                message="面板登录失败",
             )
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid password")
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="密码错误")
 
         session_id, expires_at = current_services.auth.create_admin_session()
         current_services.db.add_log(
             level="info",
             category="admin_auth",
-            message="Admin login succeeded",
+            message="面板登录成功",
             details={"expires_at": expires_at},
         )
         response = JSONResponse({"ok": True, "expires_at": expires_at})
@@ -240,7 +240,7 @@ def create_app(
         current_services.db.add_log(
             level="info",
             category="admin_auth",
-            message="Admin logged out",
+            message="面板已退出登录",
         )
         response = JSONResponse({"ok": True})
         response.delete_cookie(current_services.settings.admin_cookie_name, path="/")
@@ -277,7 +277,7 @@ def create_app(
         payload = await request.json()
         jwt = str(payload.get("jwt") or "").strip()
         if not jwt:
-            raise HTTPException(status_code=400, detail="jwt is required")
+            raise HTTPException(status_code=400, detail="缺少 JWT")
         account = await pool.register_jwt(jwt)
         return JSONResponse({"account": serialize_account(account)})
 
@@ -345,18 +345,18 @@ def create_app(
             try:
                 retention_days = max(1, int(log_retention_days))
             except (TypeError, ValueError) as exc:
-                raise HTTPException(status_code=400, detail="log_retention_days must be a positive integer") from exc
+                raise HTTPException(status_code=400, detail="log_retention_days 必须是大于 0 的整数") from exc
             current_services.db.set_setting(LOG_RETENTION_DAYS_KEY, str(retention_days))
             current_services.db.delete_logs_before(log_retention_cutoff(current_services, retention_days))
             changed.append("log_retention_days")
 
         if not changed:
-            raise HTTPException(status_code=400, detail="No security changes requested")
+            raise HTTPException(status_code=400, detail="未提交任何安全配置变更")
 
         current_services.db.add_log(
             level="info",
             category="settings",
-            message="Updated security settings",
+            message="已更新安全设置",
             details={"changed": changed},
         )
         return JSONResponse(serialize_security_settings(current_services))
@@ -380,7 +380,7 @@ def create_app(
         current_services.db.add_log(
             level="info",
             category="requests",
-            message="Listed available models",
+            message="已列出可用模型",
             details={
                 "path": str(request.url.path),
                 "model_count": len(payload["data"]),
@@ -401,7 +401,7 @@ def create_app(
         stream = bool(payload.get("stream"))
         prompt = assemble_prompt(messages)
         if not prompt:
-            raise HTTPException(status_code=400, detail="No prompt could be assembled from messages")
+            raise HTTPException(status_code=400, detail="无法从 messages 组装出有效提示词")
 
         if stream:
             return StreamingResponse(
@@ -427,7 +427,7 @@ def create_app(
             current_services.db.add_log(
                 level="warning",
                 category="requests",
-                message="Chat completion request failed",
+                message="聊天补全请求失败",
                 details={
                     "path": str(request.url.path),
                     "model": requested_model,
@@ -462,7 +462,7 @@ def create_app(
         current_services.db.add_log(
             level="info",
             category="requests",
-            message="Completed chat completion request",
+            message="聊天补全请求已完成",
             details={
                 "path": str(request.url.path),
                 "model": requested_model,
@@ -488,7 +488,7 @@ def create_app(
         stream = bool(payload.get("stream"))
         prompt = assemble_responses_prompt(payload)
         if not prompt:
-            raise HTTPException(status_code=400, detail="No prompt could be assembled from input")
+            raise HTTPException(status_code=400, detail="无法从 input 组装出有效提示词")
 
         if stream:
             return StreamingResponse(
@@ -514,7 +514,7 @@ def create_app(
             current_services.db.add_log(
                 level="warning",
                 category="requests",
-                message="Responses request failed",
+                message="Responses 请求失败",
                 details={
                     "path": str(request.url.path),
                     "model": requested_model,
@@ -546,7 +546,7 @@ def create_app(
         current_services.db.add_log(
             level="info",
             category="requests",
-            message="Completed responses request",
+            message="Responses 请求已完成",
             details={
                 "path": str(request.url.path),
                 "model": requested_model,
@@ -599,7 +599,7 @@ async def stream_chat_completions(
                 db.add_log(
                     level="warning",
                     category="requests",
-                    message="Streaming chat completion request failed",
+                    message="流式聊天补全请求失败",
                     details={
                         "path": "/v1/chat/completions",
                         "model": model,
@@ -645,7 +645,7 @@ async def stream_chat_completions(
         db.add_log(
             level="warning",
             category="requests",
-            message="Streaming chat completion request failed",
+            message="流式聊天补全请求失败",
             details={
                 "path": "/v1/chat/completions",
                 "model": model,
@@ -678,7 +678,7 @@ async def stream_chat_completions(
     db.add_log(
         level="info",
         category="requests",
-        message="Completed streaming chat completion request",
+        message="流式聊天补全请求已完成",
         details={
             "path": "/v1/chat/completions",
             "model": model,
@@ -748,7 +748,7 @@ async def stream_responses(
                 db.add_log(
                     level="warning",
                     category="requests",
-                    message="Streaming responses request failed",
+                    message="流式 Responses 请求失败",
                     details={
                         "path": "/v1/responses",
                         "model": model,
@@ -829,7 +829,7 @@ async def stream_responses(
         db.add_log(
             level="warning",
             category="requests",
-            message="Streaming responses request failed",
+            message="流式 Responses 请求失败",
             details={
                 "path": "/v1/responses",
                 "model": model,
@@ -932,7 +932,7 @@ async def stream_responses(
     db.add_log(
         level="info",
         category="requests",
-        message="Completed streaming responses request",
+        message="流式 Responses 请求已完成",
         details={
             "path": "/v1/responses",
             "model": model,
@@ -961,7 +961,7 @@ async def run_account_health_monitor(services: AppServices) -> None:
             services.db.add_log(
                 level="warning",
                 category="accounts",
-                message="Background account health check failed",
+                message="后台账号健康检查失败",
                 details={"error": str(exc)},
             )
 
@@ -974,13 +974,13 @@ def require_admin_session(request: Request, services: AppServices) -> None:
     session_id = request.cookies.get(services.settings.admin_cookie_name)
     if services.auth.verify_admin_session(session_id):
         return
-    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin authentication required")
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="需要先完成面板登录")
 
 
 def require_managed_account_pool(services: AppServices) -> AccountPool:
     if services.account_pool is not None:
         return services.account_pool
-    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Account management unavailable")
+    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="账号管理功能当前不可用")
 
 
 def enforce_api_password(request: Request, services: AppServices) -> None:
@@ -992,10 +992,10 @@ def enforce_api_password(request: Request, services: AppServices) -> None:
     services.db.add_log(
         level="warning",
         category="api_auth",
-        message="Rejected API request due to invalid API password",
+        message="API 请求因密码错误被拒绝",
         details={"path": str(request.url.path)},
     )
-    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API password")
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="API 密码错误")
 
 
 def account_summary(services: AppServices) -> dict[str, Any]:

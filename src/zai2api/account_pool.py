@@ -72,7 +72,7 @@ class AccountPool:
             await client.aclose()
 
         if completion_version != 2:
-            raise RuntimeError(f"Unsupported Z.ai completion_version={completion_version}")
+            raise RuntimeError(f"不支持的 Z.ai completion_version={completion_version}")
 
         account = self.db.upsert_account(
             jwt=jwt,
@@ -88,7 +88,7 @@ class AccountPool:
         self.db.add_log(
             level="info",
             category="accounts",
-            message="Registered account from JWT",
+            message="已通过 JWT 注册账号",
             details={"account_id": account.id, "email": account.email, "user_id": account.user_id},
         )
         return account
@@ -103,23 +103,23 @@ class AccountPool:
     def set_account_enabled(self, account_id: int, enabled: bool) -> AccountRecord:
         account = self.db.get_account(account_id)
         if account is None:
-            raise RuntimeError(f"Account {account_id} not found")
+            raise RuntimeError(f"账号 {account_id} 不存在")
         self.db.set_account_enabled(account_id, enabled)
         self.db.add_log(
             level="info",
             category="accounts",
-            message="Updated account enabled state",
+            message="已更新账号启用状态",
             details={"account_id": account_id, "enabled": enabled},
         )
         updated = self.db.get_account(account_id)
         if updated is None:
-            raise RuntimeError(f"Account {account_id} not found")
+            raise RuntimeError(f"账号 {account_id} 不存在")
         return updated
 
     async def check_account(self, account_id: int) -> AccountRecord:
         account = self.db.get_account(account_id)
         if account is None:
-            raise RuntimeError(f"Account {account_id} not found")
+            raise RuntimeError(f"账号 {account_id} 不存在")
 
         routed = RoutedAccount(
             account_id=account.id,
@@ -133,7 +133,7 @@ class AccountPool:
             session = await client.ensure_session(force_refresh=bool(account.jwt))
             completion_version = await client.verify_completion_version()
             if completion_version != 2:
-                raise RuntimeError(f"Unsupported Z.ai completion_version={completion_version}")
+                raise RuntimeError(f"不支持的 Z.ai completion_version={completion_version}")
             self.db.mark_account_success(
                 account.id,
                 session_token=session.token,
@@ -143,7 +143,7 @@ class AccountPool:
             self.db.add_log(
                 level="info",
                 category="accounts",
-                message="Account health check succeeded",
+                message="账号健康检查成功",
                 details={"account_id": account.id, "email": session.email},
             )
         except Exception as exc:
@@ -153,7 +153,7 @@ class AccountPool:
 
         updated = self.db.get_account(account_id)
         if updated is None:
-            raise RuntimeError(f"Account {account_id} not found")
+            raise RuntimeError(f"账号 {account_id} 不存在")
         return updated
 
     async def check_all_accounts(self) -> list[AccountRecord]:
@@ -172,7 +172,7 @@ class AccountPool:
     ) -> UpstreamResult:
         candidates = await self._candidate_accounts()
         if not candidates:
-            raise RuntimeError("No active accounts available")
+            raise RuntimeError("当前没有可用的启用账号")
 
         last_error: Exception | None = None
         for routed in candidates:
@@ -194,7 +194,7 @@ class AccountPool:
 
         if last_error is not None:
             raise last_error
-        raise RuntimeError("No active accounts available")
+        raise RuntimeError("当前没有可用的启用账号")
 
     async def stream_prompt(
         self,
@@ -206,7 +206,7 @@ class AccountPool:
     ):
         candidates = await self._candidate_accounts()
         if not candidates:
-            raise RuntimeError("No active accounts available")
+            raise RuntimeError("当前没有可用的启用账号")
 
         routed = candidates[0]
         client = self._client_factory(routed.jwt, routed.session_token)
@@ -274,7 +274,7 @@ class AccountPool:
         self.db.add_log(
             level="warning",
             category="accounts",
-            message="Account request failed",
+            message="账号请求失败",
             details={"account": routed.label, "disable": disable, "error": error_text},
         )
         if routed.persistent and routed.account_id is not None:
@@ -287,7 +287,7 @@ class AccountPool:
         if isinstance(error, httpx.HTTPStatusError):
             return error.response.status_code == 401
         if isinstance(error, RuntimeError):
-            return "Missing ZAI_JWT or ZAI_SESSION_TOKEN" in str(error)
+            return "缺少 ZAI_JWT 或 ZAI_SESSION_TOKEN" in str(error)
         return False
 
     def _describe_error(self, error: Exception) -> str:

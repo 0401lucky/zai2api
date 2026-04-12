@@ -11,7 +11,7 @@ def render_admin_page() -> str:
           <head>
             <meta charset="utf-8" />
             <meta name="viewport" content="width=device-width, initial-scale=1" />
-            <title>zai2api Control Center</title>
+            <title>zai2api 控制台</title>
             <style>
               :root {
                 color-scheme: light;
@@ -578,8 +578,7 @@ def render_admin_page() -> str:
                 min-width: 0;
               }
 
-              .detail-row code,
-              .log-details {
+              .detail-row code {
                 display: block;
                 max-width: 100%;
                 font-family: "Cascadia Code", "Consolas", monospace;
@@ -591,6 +590,161 @@ def render_admin_page() -> str:
                 white-space: pre-wrap;
                 word-break: break-word;
                 overflow-wrap: anywhere;
+              }
+
+              .log-stream {
+                display: grid;
+                gap: 10px;
+              }
+
+              .log-row {
+                border: 1px solid var(--line);
+                border-radius: 18px;
+                background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(244, 248, 255, 0.92));
+                overflow: hidden;
+                transition: 160ms ease;
+              }
+
+              .log-row:hover {
+                border-color: var(--line-strong);
+                background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(241, 247, 255, 0.96));
+                transform: translateY(-1px);
+              }
+
+              .log-row[open] {
+                background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(239, 246, 255, 0.96));
+              }
+
+              .log-row.success {
+                box-shadow: inset 3px 0 0 rgba(31, 143, 99, 0.65);
+              }
+
+              .log-row.warn {
+                box-shadow: inset 3px 0 0 rgba(183, 121, 31, 0.68);
+              }
+
+              .log-row.error {
+                box-shadow: inset 3px 0 0 rgba(209, 67, 67, 0.68);
+              }
+
+              .log-summary {
+                display: grid;
+                grid-template-columns: minmax(120px, 148px) minmax(0, 1fr) auto;
+                gap: 14px;
+                align-items: center;
+                padding: 14px 16px;
+                cursor: pointer;
+                list-style: none;
+              }
+
+              .log-summary::-webkit-details-marker {
+                display: none;
+              }
+
+              .log-row.compact .log-summary {
+                padding: 12px 14px;
+              }
+
+              .log-rail,
+              .log-mainline {
+                display: grid;
+                gap: 4px;
+                min-width: 0;
+              }
+
+              .log-level-chip {
+                display: inline-flex;
+                width: fit-content;
+                align-items: center;
+                gap: 6px;
+                padding: 5px 10px;
+                border-radius: 999px;
+                font-size: 11px;
+                font-weight: 700;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                border: 1px solid transparent;
+              }
+
+              .log-level-chip.success {
+                color: var(--success);
+                background: rgba(31, 143, 99, 0.1);
+                border-color: rgba(31, 143, 99, 0.14);
+              }
+
+              .log-level-chip.warn {
+                color: #8a6019;
+                background: rgba(183, 121, 31, 0.1);
+                border-color: rgba(183, 121, 31, 0.14);
+              }
+
+              .log-level-chip.error {
+                color: #9c3535;
+                background: rgba(209, 67, 67, 0.1);
+                border-color: rgba(209, 67, 67, 0.14);
+              }
+
+              .log-time {
+                color: var(--text-2);
+                font-size: 12px;
+                line-height: 1.4;
+                font-family: "Cascadia Code", "Consolas", monospace;
+              }
+
+              .log-message {
+                margin: 0;
+                font-size: 15px;
+                line-height: 1.45;
+                font-weight: 700;
+                color: var(--text-0);
+              }
+
+              .log-context {
+                color: var(--text-2);
+                font-size: 11px;
+                line-height: 1.4;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+              }
+
+              .log-toggle {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                color: var(--text-2);
+                font-size: 12px;
+                white-space: nowrap;
+              }
+
+              .log-caret {
+                display: inline-block;
+                transition: transform 160ms ease;
+              }
+
+              .log-row[open] .log-caret {
+                transform: rotate(180deg);
+              }
+
+              .log-details,
+              .log-empty {
+                margin: 0 16px 16px;
+                padding: 12px 14px;
+                border-radius: 14px;
+                border: 1px solid rgba(20, 56, 102, 0.08);
+                background: rgba(239, 244, 253, 0.96);
+                color: #31527c;
+                font-family: "Cascadia Code", "Consolas", monospace;
+                font-size: 12px;
+                line-height: 1.6;
+                white-space: pre-wrap;
+                word-break: break-word;
+                overflow-wrap: anywhere;
+                overflow: auto;
+              }
+
+              .log-empty {
+                color: var(--text-2);
+                font-family: "Segoe UI Variable Text", "Segoe UI", "Noto Sans SC", system-ui, sans-serif;
               }
 
               .login-layer {
@@ -723,6 +877,10 @@ def render_admin_page() -> str:
                   grid-template-columns: 1fr;
                 }
 
+                .log-summary {
+                  grid-template-columns: 1fr;
+                }
+
                 .toast-stack {
                   right: 12px;
                   left: 12px;
@@ -736,19 +894,18 @@ def render_admin_page() -> str:
               <aside class="panel sidebar">
                 <div class="brand">
                   <div class="brand-badge">✦</div>
-                  <div class="brand-title">zai2api Control</div>
+                  <div class="brand-title">zai2api 控制台</div>
                   <div class="brand-copy">
-                    Fluent-inspired operation center for account orchestration,
-                    security governance, and runtime visibility.
+                    面向账号调度、安全治理和运行态可视化的统一操作台。
                   </div>
                 </div>
 
                 <nav class="nav-list" id="nav-list"></nav>
 
                 <div class="sidebar-footer">
-                  <div class="metric-label">Runtime posture</div>
+                  <div class="metric-label">运行态概览</div>
                   <div class="muted-copy" id="sidebar-posture">
-                    Waiting for bootstrap diagnostics.
+                    正在等待引导诊断结果。
                   </div>
                 </div>
               </aside>
@@ -756,12 +913,12 @@ def render_admin_page() -> str:
               <main class="panel main">
                 <div class="topbar">
                   <div class="headline">
-                    <h1 id="headline-title">Preparing control center...</h1>
-                    <p id="headline-copy">Synchronizing admin state and security posture.</p>
+                    <h1 id="headline-title">正在准备控制台...</h1>
+                    <p id="headline-copy">正在同步管理状态与安全态势。</p>
                   </div>
                   <div class="top-actions">
-                    <button class="ghost-button" id="refresh-button">Refresh</button>
-                    <button class="secondary-button" id="logout-button">Sign out</button>
+                    <button class="ghost-button" id="refresh-button">刷新</button>
+                    <button class="secondary-button" id="logout-button">退出登录</button>
                   </div>
                 </div>
 
@@ -772,22 +929,21 @@ def render_admin_page() -> str:
             <section class="login-layer hidden" id="login-layer">
               <form class="login-card" id="login-form">
                 <div>
-                  <div class="hero-kicker">Admin Authentication</div>
+                  <div class="hero-kicker">管理员认证</div>
                 </div>
                 <div>
-                  <h2 class="login-title">Unlock the control plane</h2>
+                  <h2 class="login-title">登录控制台</h2>
                   <p class="login-copy">
-                    Enter the panel password to access account routing, audit signals,
-                    and security controls.
+                    输入面板密码后即可进入账号调度、审计日志和安全控制界面。
                   </p>
                 </div>
                 <div class="banner info" id="login-hint"></div>
                 <div class="field-group">
-                  <label class="field-label" for="panel-password">Panel password</label>
+                  <label class="field-label" for="panel-password">面板密码</label>
                   <input class="field-input" id="panel-password" type="password" autocomplete="current-password" />
-                  <div class="field-hint">If no env or database password is configured, the active default is <strong>123456</strong>.</div>
+                  <div class="field-hint">如果环境变量和数据库都未配置密码，当前默认密码为 <strong>123456</strong>。</div>
                 </div>
-                <button class="primary-button" id="login-submit" type="submit">Sign in</button>
+                <button class="primary-button" id="login-submit" type="submit">登录</button>
                 <div class="banner error hidden" id="login-error"></div>
               </form>
             </section>
@@ -796,10 +952,10 @@ def render_admin_page() -> str:
 
             <script>
               const views = [
-                { id: 'overview', label: 'Overview', meta: 'Live posture' },
-                { id: 'accounts', label: 'Accounts', meta: 'Pool operations' },
-                { id: 'security', label: 'Security', meta: 'Passwords & policy' },
-                { id: 'logs', label: 'Logs', meta: 'Audit signal' },
+                { id: 'overview', label: '概览', meta: '实时态势' },
+                { id: 'accounts', label: '账号', meta: '池管理' },
+                { id: 'security', label: '安全', meta: '密码与策略' },
+                { id: 'logs', label: '日志', meta: '审计信号' },
               ];
 
               const state = {
@@ -831,6 +987,40 @@ def render_admin_page() -> str:
               const headlineCopy = document.getElementById('headline-copy');
               const sidebarPosture = document.getElementById('sidebar-posture');
 
+              const accountStatusLabels = {
+                active: '正常',
+                invalid: '失效',
+                disabled: '已停用',
+              };
+
+              const runtimeStatusLabels = {
+                'env-fallback': '环境变量兜底',
+                pool: '持久化账号池',
+              };
+
+              const sourceLabels = {
+                env: '环境变量',
+                database: '数据库',
+                default: '默认值',
+                disabled: '未启用',
+                unknown: '未知',
+              };
+
+              const logLevelLabels = {
+                info: '信息',
+                warning: '警告',
+                error: '错误',
+              };
+
+              const logCategoryLabels = {
+                startup: '启动',
+                admin_auth: '面板认证',
+                settings: '安全设置',
+                requests: '请求',
+                accounts: '账号',
+                api_auth: 'API 认证',
+              };
+
               function showToast(message, tone = 'info') {
                 const node = document.createElement('div');
                 node.className = `toast ${tone}`;
@@ -847,13 +1037,13 @@ def render_admin_page() -> str:
                 refreshButton.disabled = flag;
                 logoutButton.disabled = flag;
                 loginSubmit.disabled = flag;
-                loginSubmit.textContent = flag ? 'Signing in...' : 'Sign in';
+                loginSubmit.textContent = flag ? '登录中...' : '登录';
               }
 
               function formatTimestamp(value) {
                 if (!value) return '—';
                 const date = new Date(value * 1000);
-                return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString();
+                return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('zh-CN');
               }
 
               async function api(path, options = {}) {
@@ -864,9 +1054,18 @@ def render_admin_page() -> str:
                 });
                 const payload = await response.json().catch(() => ({}));
                 if (!response.ok) {
-                  throw new Error(payload.detail || 'Request failed');
+                  throw new Error(payload.detail || '请求失败');
                 }
                 return payload;
+              }
+
+              function displayLabel(labels, value, fallback = '未知') {
+                if (!value) return fallback;
+                return labels[value] || value;
+              }
+
+              function renderPill(label, tone = '') {
+                return `<span class="status-pill"><span class="status-dot ${tone}"></span>${label}</span>`;
               }
 
               function renderNav() {
@@ -891,10 +1090,23 @@ def render_admin_page() -> str:
                 `;
               }
 
-              function statusBadge(enabled, status) {
+              function accountStatusBadge(enabled, status) {
                 const tone = enabled && status === 'active' ? 'success' : (!enabled || status === 'invalid' ? 'error' : '');
-                const label = `${enabled ? 'Enabled' : 'Disabled'} · ${status}`;
-                return `<span class="status-pill"><span class="status-dot ${tone}"></span>${label}</span>`;
+                const label = `${enabled ? '已启用' : '已停用'} · ${displayLabel(accountStatusLabels, status)}`;
+                return renderPill(label, tone);
+              }
+
+              function runtimeModeBadge(summary) {
+                if (summary.using_env_fallback) {
+                  return renderPill(`运行模式 · ${displayLabel(runtimeStatusLabels, 'env-fallback')}`);
+                }
+                const tone = summary.persisted_enabled ? 'success' : 'error';
+                return renderPill(`运行模式 · ${displayLabel(runtimeStatusLabels, 'pool')}`, tone);
+              }
+
+              function sourceBadge(source, enabled = true) {
+                const tone = source === 'disabled' ? 'error' : (enabled ? 'success' : '');
+                return renderPill(`来源 · ${displayLabel(sourceLabels, source)}`, tone);
               }
 
               function accountCard(account) {
@@ -902,40 +1114,44 @@ def render_admin_page() -> str:
                   <article class="account-card">
                     <div class="account-card-header">
                       <div>
-                        <h3 class="account-card-title">${account.name || account.email || account.user_id || 'Unnamed account'}</h3>
-                        <div class="account-meta">${account.email || account.user_id || 'No identity available'}</div>
+                        <h3 class="account-card-title">${account.name || account.email || account.user_id || '未命名账号'}</h3>
+                        <div class="account-meta">${account.email || account.user_id || '暂无身份信息'}</div>
                       </div>
-                      ${statusBadge(account.enabled, account.status)}
+                      ${accountStatusBadge(account.enabled, account.status)}
                     </div>
                     <div class="detail-list">
                       <div class="detail-row"><span class="metric-label">JWT</span><code>${account.masked_jwt || '—'}</code></div>
-                      <div class="detail-row"><span class="metric-label">Session</span><code>${account.masked_session_token || '—'}</code></div>
-                      <div class="detail-row"><span class="metric-label">Checked</span><div class="muted-copy">${formatTimestamp(account.last_checked_at)}</div></div>
-                      <div class="detail-row"><span class="metric-label">Failures</span><div class="muted-copy">${account.failure_count}</div></div>
-                      <div class="detail-row"><span class="metric-label">Last error</span><div class="muted-copy">${account.last_error || 'None'}</div></div>
+                      <div class="detail-row"><span class="metric-label">会话</span><code>${account.masked_session_token || '—'}</code></div>
+                      <div class="detail-row"><span class="metric-label">最近检查</span><div class="muted-copy">${formatTimestamp(account.last_checked_at)}</div></div>
+                      <div class="detail-row"><span class="metric-label">失败次数</span><div class="muted-copy">${account.failure_count}</div></div>
+                      <div class="detail-row"><span class="metric-label">最近错误</span><div class="muted-copy">${account.last_error || '无'}</div></div>
                     </div>
                     <div class="account-actions">
-                      <button class="secondary-button" data-action="check-account" data-account-id="${account.id}">Check</button>
-                      <button class="${account.enabled ? 'danger-button' : 'ghost-button'}" data-action="toggle-account" data-account-id="${account.id}" data-enabled="${account.enabled ? '1' : '0'}">${account.enabled ? 'Disable' : 'Enable'}</button>
+                      <button class="secondary-button" data-action="check-account" data-account-id="${account.id}">检测</button>
+                      <button class="${account.enabled ? 'danger-button' : 'ghost-button'}" data-action="toggle-account" data-account-id="${account.id}" data-enabled="${account.enabled ? '1' : '0'}">${account.enabled ? '禁用' : '启用'}</button>
                     </div>
                   </article>
                 `;
               }
 
-              function logCard(log) {
+              function logRow(log, compact = false) {
                 const tone = log.level === 'warning' ? 'warn' : (log.level === 'error' ? 'error' : 'success');
+                const detailText = log.details ? JSON.stringify(log.details, null, 2) : '';
                 return `
-                  <article class="log-card">
-                    <div class="log-card-header">
-                      <div>
-                        <div class="metric-label">${log.category}</div>
-                        <h3 class="log-card-title">${log.message}</h3>
+                  <details class="log-row ${tone} ${compact ? 'compact' : ''}">
+                    <summary class="log-summary">
+                      <div class="log-rail">
+                        <span class="log-level-chip ${tone}">${displayLabel(logLevelLabels, log.level, log.level || '未知')}</span>
+                        <span class="log-time">${formatTimestamp(log.created_at)}</span>
                       </div>
-                      <span class="status-pill"><span class="status-dot ${tone === 'success' ? 'success' : tone === 'error' ? 'error' : ''}"></span>${log.level}</span>
-                    </div>
-                    <div class="log-meta">${formatTimestamp(log.created_at)}</div>
-                    <div class="log-details">${log.details ? JSON.stringify(log.details, null, 2) : 'No details'}</div>
-                  </article>
+                      <div class="log-mainline">
+                        <div class="log-message">${log.message}</div>
+                        <div class="log-context">${displayLabel(logCategoryLabels, log.category, log.category || '未知')}</div>
+                      </div>
+                      <span class="log-toggle">查看详情 <span class="log-caret">▾</span></span>
+                    </summary>
+                    ${detailText ? `<div class="log-details">${detailText}</div>` : '<div class="log-empty">暂无详情</div>'}
+                  </details>
                 `;
               }
 
@@ -948,43 +1164,43 @@ def render_admin_page() -> str:
                 const apiPassword = (security.api_password || bootstrap.api_password || {});
                 const summary = bootstrap.accounts || {};
                 const defaultBanner = panelPassword.default_password_active
-                  ? '<div class="banner warn">Panel password is currently using the default fallback <strong>123456</strong>. Change it now from the Security page.</div>'
+                  ? '<div class="banner warn">当前面板密码仍在使用默认兜底值 <strong>123456</strong>。请立即前往“安全”页修改。</div>'
                   : '';
                 return `
                   <section class="hero">
                     <article class="hero-card">
-                      <div class="hero-kicker">Operational Snapshot</div>
-                      <h2 class="hero-title">Account routing is online and ready for live control.</h2>
+                      <div class="hero-kicker">运行快照</div>
+                      <h2 class="hero-title">账号路由已上线，可直接进入实战控制。</h2>
                       <p class="hero-text">
-                        All critical backend actions are now connected. You can register JWT credentials, rotate passwords,
-                        and inspect audit events directly from this console.
+                        现在可以直接在这个控制台里完成 JWT 注册、密码轮换和审计事件排查，
+                        关键后端链路已经全部接通。
                       </p>
                       ${defaultBanner}
                       <div class="stats-grid">
-                        ${metricCard('Persisted accounts', summary.persisted_total ?? 0, 'Accounts currently stored in SQLite.')}
-                        ${metricCard('Enabled accounts', summary.persisted_enabled ?? 0, 'Accounts available for routing right now.')}
-                        ${metricCard('API auth', apiPassword.enabled ? 'On' : 'Off', apiPassword.enabled ? 'API requests currently require the configured password.' : 'API requests are currently open because no API password is active.')}
-                        ${metricCard('Recent logs', logs.length, 'Entries loaded into the current frontend session.')}
+                        ${metricCard('已持久化账号', summary.persisted_total ?? 0, '当前已存入 SQLite 的账号数量。')}
+                        ${metricCard('已启用账号', summary.persisted_enabled ?? 0, '当前可参与路由的账号数量。')}
+                        ${metricCard('API 认证', apiPassword.enabled ? '开启' : '关闭', apiPassword.enabled ? '当前调用 API 需要提供已配置的密码。' : '当前 API 处于开放状态，因为尚未启用 API 密码。')}
+                        ${metricCard('最近日志', logs.length, '本次前端会话中已加载的审计条目数。')}
                       </div>
                     </article>
                     <article class="hero-card">
-                      <div class="metric-label">Readiness summary</div>
-                      ${statusBadge(Boolean(summary.persisted_enabled), summary.using_env_fallback ? 'env-fallback' : 'pool')}
-                      <div class="muted-copy">Active panel password source: <strong>${panelPassword.source || 'unknown'}</strong>.</div>
-                      <div class="muted-copy">API password source: <strong>${apiPassword.source || 'disabled'}</strong>.</div>
-                      <div class="muted-copy">Loaded accounts in current view cache: <strong>${accounts.length}</strong>.</div>
-                      <div class="banner info">Use the sidebar to switch between account, security, and log workflows without leaving the current session.</div>
+                      <div class="metric-label">就绪摘要</div>
+                      ${runtimeModeBadge(summary)}
+                      <div class="muted-copy">当前面板密码来源：<strong>${displayLabel(sourceLabels, panelPassword.source)}</strong>。</div>
+                      <div class="muted-copy">当前 API 密码来源：<strong>${displayLabel(sourceLabels, apiPassword.source)}</strong>。</div>
+                      <div class="muted-copy">当前视图缓存中的账号数：<strong>${accounts.length}</strong>。</div>
+                      <div class="banner info">左侧导航可以在账号、安全和日志工作流之间快速切换，无需离开当前会话。</div>
                     </article>
                   </section>
                   <section class="view-card">
                     <div class="view-header">
                       <div>
-                        <h2>Recent audit activity</h2>
-                        <p class="muted-copy">The three latest audit entries are mirrored here for fast context.</p>
+                        <h2>最近审计活动</h2>
+                        <p class="muted-copy">这里会同步展示最近三条审计记录，便于快速判断当前状态。</p>
                       </div>
                     </div>
-                    <div class="account-grid">
-                      ${logs.slice(0, 3).map(logCard).join('') || '<div class="banner info">No logs loaded yet. Open the Logs page or press Refresh.</div>'}
+                    <div class="log-stream">
+                      ${logs.slice(0, 3).map((log) => logRow(log, true)).join('') || '<div class="banner info">暂未加载日志。可进入“日志”页，或点击右上角“刷新”。</div>'}
                     </div>
                   </section>
                 `;
@@ -997,32 +1213,32 @@ def render_admin_page() -> str:
                     <article class="form-card">
                       <div class="view-header">
                         <div>
-                          <h2>Add account</h2>
-                          <p class="muted-copy">Paste a JWT. The backend will verify it, derive the session token, and persist the account.</p>
+                          <h2>添加账号</h2>
+                          <p class="muted-copy">粘贴 JWT 后，后端会自动校验、换取会话令牌并持久化保存该账号。</p>
                         </div>
-                        <span class="chip">Validation + persist</span>
+                        <span class="chip">校验并持久化</span>
                       </div>
                       <form id="add-account-form" class="field-group">
-                        <label class="field-label" for="new-jwt">JWT credential</label>
+                        <label class="field-label" for="new-jwt">JWT 凭证</label>
                         <textarea class="field-textarea" id="new-jwt" placeholder="eyJhbGciOi..." required></textarea>
                         <div class="inline-actions">
-                          <button class="primary-button" type="submit" id="add-account-submit">Verify and save</button>
+                          <button class="primary-button" type="submit" id="add-account-submit">校验并保存</button>
                         </div>
                       </form>
                     </article>
                     <article class="view-card">
                       <div class="view-header">
                         <div>
-                          <h2>Account pool</h2>
-                          <p class="muted-copy">Enable, disable, or manually check any persisted account.</p>
+                          <h2>账号池</h2>
+                          <p class="muted-copy">可以对任意已持久化账号执行启用、禁用或手动健康检查。</p>
                         </div>
                         <div class="toolbar">
-                          <button class="ghost-button" data-action="reload-accounts">Reload accounts</button>
-                          <span class="status-pill"><span class="status-dot ${accounts.length ? 'success' : ''}"></span>${accounts.length} loaded</span>
+                          <button class="ghost-button" data-action="reload-accounts">刷新账号</button>
+                          ${renderPill(`已加载 ${accounts.length} 个账号`, accounts.length ? 'success' : '')}
                         </div>
                       </div>
                       <div class="account-grid">
-                        ${accounts.length ? accounts.map(accountCard).join('') : '<div class="banner info">No persisted accounts yet. Add the first JWT from the card on the left.</div>'}
+                        ${accounts.length ? accounts.map(accountCard).join('') : '<div class="banner info">暂时还没有持久化账号，请先在左侧卡片中添加第一条 JWT。</div>'}
                       </div>
                     </article>
                   </section>
@@ -1039,19 +1255,19 @@ def render_admin_page() -> str:
                     <article class="form-card">
                       <div class="view-header">
                         <div>
-                          <h2>Panel password</h2>
-                          <p class="muted-copy">Rotate the password used to unlock the admin surface.</p>
+                          <h2>面板密码</h2>
+                          <p class="muted-copy">修改用于进入管理面的登录密码。</p>
                         </div>
-                        ${statusBadge(true, panel.source || 'unknown')}
+                        ${sourceBadge(panel.source || 'unknown')}
                       </div>
                       <div class="banner ${panel.overridden_by_env ? 'warn' : 'info'}">
-                        ${panel.overridden_by_env ? 'Env value currently overrides database state. Saved changes will not become effective until the env override is removed.' : 'Database-backed settings are active for panel login.'}
+                        ${panel.overridden_by_env ? '当前环境变量会覆盖数据库里的面板密码配置。只有移除环境变量覆盖后，已保存的新值才会生效。' : '当前面板登录正在使用数据库中的密码配置。'}
                       </div>
                       <form id="panel-password-form" class="field-group">
-                        <label class="field-label" for="panel-password-next">New panel password</label>
+                        <label class="field-label" for="panel-password-next">新的面板密码</label>
                         <input class="field-input" id="panel-password-next" type="password" autocomplete="new-password" required />
                         <div class="inline-actions">
-                          <button class="primary-button" type="submit">Update panel password</button>
+                          <button class="primary-button" type="submit">更新面板密码</button>
                         </div>
                       </form>
                     </article>
@@ -1059,55 +1275,55 @@ def render_admin_page() -> str:
                     <article class="form-card">
                       <div class="view-header">
                         <div>
-                          <h2>API password</h2>
-                          <p class="muted-copy">Control whether <code>/v1/*</code> requires a password and rotate that credential when needed.</p>
+                          <h2>API 密码</h2>
+                          <p class="muted-copy">控制 <code>/v1/*</code> 是否需要密码，并在需要时轮换这项凭证。</p>
                         </div>
-                        ${statusBadge(apiPassword.enabled, apiPassword.source || 'disabled')}
+                        ${sourceBadge(apiPassword.source || 'disabled', apiPassword.enabled)}
                       </div>
                       <div class="banner ${apiPassword.overridden_by_env ? 'warn' : 'info'}">
-                        ${apiPassword.overridden_by_env ? 'Env value overrides the database-backed API password configuration.' : apiPassword.enabled ? 'API authentication is enabled.' : 'API authentication is currently disabled.'}
+                        ${apiPassword.overridden_by_env ? '当前环境变量会覆盖数据库中的 API 密码配置。' : apiPassword.enabled ? '当前已启用 API 密码认证。' : '当前未启用 API 密码认证。'}
                       </div>
                       <form id="api-password-form" class="field-group">
-                        <label class="field-label" for="api-password-next">New API password</label>
+                        <label class="field-label" for="api-password-next">新的 API 密码</label>
                         <input class="field-input" id="api-password-next" type="password" autocomplete="new-password" />
                         <div class="inline-actions">
-                          <button class="primary-button" type="submit">Save API password</button>
-                          <button class="ghost-button" type="button" data-action="disable-api-password">Disable API auth</button>
+                          <button class="primary-button" type="submit">保存 API 密码</button>
+                          <button class="ghost-button" type="button" data-action="disable-api-password">关闭 API 认证</button>
                         </div>
                       </form>
                       <div class="inline-card">
-                        <div class="metric-label">Polling interval</div>
+                        <div class="metric-label">轮询间隔</div>
                         <div class="metric-value">${security.poll_interval_seconds ?? 0}s</div>
-                        <div class="metric-copy">Configured background account health check interval.</div>
+                        <div class="metric-copy">后台账号健康检查的配置间隔。</div>
                       </div>
                     </article>
 
                     <article class="form-card">
                       <div class="view-header">
                         <div>
-                          <h2>Log retention</h2>
-                          <p class="muted-copy">Control how long audit logs are kept in SQLite before old entries are cleaned up.</p>
+                          <h2>日志保留</h2>
+                          <p class="muted-copy">控制审计日志在 SQLite 中保留多久，超过窗口的旧记录会被自动清理。</p>
                         </div>
-                        ${statusBadge(true, logRetention.source || 'default')}
+                        ${sourceBadge(logRetention.source || 'default')}
                       </div>
                       <div class="banner ${logRetention.overridden_by_env ? 'warn' : logRetention.default_active ? 'info' : 'info'}">
                         ${logRetention.overridden_by_env
-                          ? 'Env value currently overrides the database-backed log retention setting.'
+                          ? '当前环境变量会覆盖数据库中的日志保留配置。'
                           : logRetention.default_active
-                            ? 'No explicit retention override is set. The active default retention is 7 days.'
-                            : 'Database-backed log retention is active.'}
+                            ? '当前没有显式覆盖项，正在使用默认的 7 天保留策略。'
+                            : '当前正在使用数据库中的日志保留配置。'}
                       </div>
                       <form id="log-retention-form" class="field-group">
-                        <label class="field-label" for="log-retention-days">Retention days</label>
+                        <label class="field-label" for="log-retention-days">保留天数</label>
                         <input class="field-input" id="log-retention-days" type="number" min="1" step="1" value="${logRetention.days ?? 7}" required />
                         <div class="inline-actions">
-                          <button class="primary-button" type="submit">Save retention</button>
+                          <button class="primary-button" type="submit">保存保留策略</button>
                         </div>
                       </form>
                       <div class="inline-card">
-                        <div class="metric-label">Current policy</div>
+                        <div class="metric-label">当前策略</div>
                         <div class="metric-value">${logRetention.days ?? 7}d</div>
-                        <div class="metric-copy">Logs older than this window will be removed automatically.</div>
+                        <div class="metric-copy">超过这个时间窗口的日志会被自动清理。</div>
                       </div>
                     </article>
                   </section>
@@ -1120,16 +1336,16 @@ def render_admin_page() -> str:
                   <section class="view-card">
                     <div class="view-header">
                       <div>
-                        <h2>Audit logs</h2>
-                        <p class="muted-copy">Review account operations, security changes, and warnings emitted by the backend.</p>
+                        <h2>审计日志</h2>
+                        <p class="muted-copy">默认只展示时间、等级和事件标题，点开某一行时再查看完整上下文。</p>
                       </div>
                       <div class="toolbar">
-                        <button class="ghost-button" data-action="reload-logs">Refresh logs</button>
-                        <span class="status-pill"><span class="status-dot ${logs.length ? 'success' : ''}"></span>${logs.length} loaded</span>
+                        <button class="ghost-button" data-action="reload-logs">刷新日志</button>
+                        ${renderPill(`已加载 ${logs.length} 条日志`, logs.length ? 'success' : '')}
                       </div>
                     </div>
-                    <div class="account-grid">
-                      ${logs.length ? logs.map(logCard).join('') : '<div class="banner info">No audit entries loaded yet. Press Refresh to try again.</div>'}
+                    <div class="log-stream">
+                      ${logs.length ? logs.map((log) => logRow(log)).join('') : '<div class="banner info">暂未加载审计记录，请点击“刷新日志”重试。</div>'}
                     </div>
                   </section>
                 `;
@@ -1146,13 +1362,13 @@ def render_admin_page() -> str:
                 renderNav();
                 const bootstrap = state.bootstrap || {};
                 const accounts = bootstrap.accounts || {};
-                headlineTitle.textContent = state.loggedIn ? 'Control center online' : 'Authentication required';
+                headlineTitle.textContent = state.loggedIn ? '控制台已就绪' : '需要身份验证';
                 headlineCopy.textContent = state.loggedIn
-                  ? 'The admin panel is connected to real backend workflows for account routing, security, and audit exploration.'
-                  : 'Sign in to unlock account orchestration, security settings, and audit visibility.';
+                  ? '管理面已连接真实后端流程，可直接进行账号路由、安全配置和审计排查。'
+                  : '登录后即可解锁账号编排、安全设置和审计可见性。';
                 sidebarPosture.textContent = state.loggedIn
-                  ? `Persisted ${accounts.persisted_enabled ?? 0} / ${accounts.persisted_total ?? 0} accounts. ${accounts.using_env_fallback ? 'Env fallback is active.' : 'Persisted pool is active.'}`
-                  : 'Panel is locked. Use the password gate to continue.';
+                  ? `已启用 ${accounts.persisted_enabled ?? 0} / ${accounts.persisted_total ?? 0} 个持久化账号。${accounts.using_env_fallback ? '当前正在使用环境变量兜底。' : '当前正在使用持久化账号池。'}`
+                  : '控制台已锁定，请先输入面板密码。';
                 loginLayer.classList.toggle('hidden', state.loggedIn);
                 logoutButton.classList.toggle('hidden', !state.loggedIn);
                 contentRoot.innerHTML = state.loggedIn
@@ -1160,16 +1376,16 @@ def render_admin_page() -> str:
                   : `
                     <section class="hero">
                       <article class="hero-card">
-                        <div class="hero-kicker">Access control</div>
-                        <h2 class="hero-title">This route is protected by the panel password.</h2>
+                        <div class="hero-kicker">访问控制</div>
+                        <h2 class="hero-title">当前页面受面板密码保护。</h2>
                         <p class="hero-text">
-                          Sign in from the acrylic gate to continue. The shell will immediately sync your latest backend posture once authenticated.
+                          请先通过上方登录层完成认证。认证成功后，页面会立即同步最新的后端状态。
                         </p>
                       </article>
                       <article class="hero-card">
-                        <div class="metric-label">Current defaults</div>
+                        <div class="metric-label">当前默认值</div>
                         <div class="placeholder-copy">
-                          If no env or database value exists, the panel password falls back to <strong>123456</strong> and the API password remains disabled.
+                          如果环境变量和数据库都没有配置值，面板密码会回退到 <strong>123456</strong>，同时 API 密码保持关闭状态。
                         </div>
                       </article>
                     </section>
@@ -1181,8 +1397,8 @@ def render_admin_page() -> str:
                 state.bootstrap = response;
                 state.loggedIn = Boolean(response.logged_in);
                 loginHint.textContent = response.panel_password?.default_password_active
-                  ? 'Default fallback password is active. Sign in and rotate it as soon as possible.'
-                  : 'Use the active panel password to access the admin surface.';
+                  ? '当前正在使用默认兜底密码，请登录后尽快完成修改。'
+                  : '请输入当前生效的面板密码以进入管理面。';
                 if (!state.loggedIn) {
                   state.accounts = null;
                   state.security = null;
@@ -1190,7 +1406,7 @@ def render_admin_page() -> str:
                 }
                 render();
                 if (showToastOnSuccess) {
-                  showToast('Control plane refreshed.', 'success');
+                  showToast('控制台数据已刷新。', 'success');
                 }
               }
 
@@ -1229,13 +1445,13 @@ def render_admin_page() -> str:
                     body: JSON.stringify({ password: panelPassword.value }),
                   });
                   panelPassword.value = '';
-                  showToast('Signed in successfully.', 'success');
+                  showToast('登录成功。', 'success');
                   await refreshBootstrap(false);
                   await ensureViewData('overview');
                 } catch (error) {
-                  loginError.textContent = error.message || 'Login failed.';
+                  loginError.textContent = error.message || '登录失败。';
                   loginError.classList.remove('hidden');
-                  showToast('Panel authentication failed.', 'error');
+                  showToast('面板认证失败。', 'error');
                 } finally {
                   setTopBusy(false);
                 }
@@ -1259,25 +1475,25 @@ def render_admin_page() -> str:
                   const submit = form.querySelector('#add-account-submit');
                   const jwt = textarea.value.trim();
                   if (!jwt) {
-                    showToast('JWT cannot be empty.', 'warn');
+                    showToast('JWT 不能为空。', 'warn');
                     return;
                   }
                   submit.disabled = true;
-                  submit.textContent = 'Verifying...';
+                  submit.textContent = '校验中...';
                   try {
                     await api('/api/admin/accounts', {
                       method: 'POST',
                       body: JSON.stringify({ jwt }),
                     });
                     textarea.value = '';
-                    showToast('Account verified and stored.', 'success');
+                    showToast('账号已校验并保存。', 'success');
                     await refreshBootstrap(false);
                     await ensureViewData('accounts');
                   } catch (error) {
-                    showToast(error.message || 'Failed to add account.', 'error');
+                    showToast(error.message || '添加账号失败。', 'error');
                   } finally {
                     submit.disabled = false;
-                    submit.textContent = 'Verify and save';
+                    submit.textContent = '校验并保存';
                   }
                 }
 
@@ -1287,7 +1503,7 @@ def render_admin_page() -> str:
                   const submit = form.querySelector('button[type="submit"]');
                   const password = input.value.trim();
                   if (!password) {
-                    showToast('Panel password cannot be empty.', 'warn');
+                    showToast('面板密码不能为空。', 'warn');
                     return;
                   }
                   submit.disabled = true;
@@ -1297,11 +1513,11 @@ def render_admin_page() -> str:
                       body: JSON.stringify({ panel_password: password }),
                     });
                     input.value = '';
-                    showToast('Panel password updated.', 'success');
+                    showToast('面板密码已更新。', 'success');
                     await refreshBootstrap(false);
                     await ensureViewData('security');
                   } catch (error) {
-                    showToast(error.message || 'Failed to update panel password.', 'error');
+                    showToast(error.message || '更新面板密码失败。', 'error');
                   } finally {
                     submit.disabled = false;
                   }
@@ -1313,7 +1529,7 @@ def render_admin_page() -> str:
                   const submit = form.querySelector('button[type="submit"]');
                   const password = input.value.trim();
                   if (!password) {
-                    showToast('API password cannot be empty.', 'warn');
+                    showToast('API 密码不能为空。', 'warn');
                     return;
                   }
                   submit.disabled = true;
@@ -1323,11 +1539,11 @@ def render_admin_page() -> str:
                       body: JSON.stringify({ api_password: password }),
                     });
                     input.value = '';
-                    showToast('API password updated.', 'success');
+                    showToast('API 密码已更新。', 'success');
                     await refreshBootstrap(false);
                     await ensureViewData('security');
                   } catch (error) {
-                    showToast(error.message || 'Failed to update API password.', 'error');
+                    showToast(error.message || '更新 API 密码失败。', 'error');
                   } finally {
                     submit.disabled = false;
                   }
@@ -1339,7 +1555,7 @@ def render_admin_page() -> str:
                   const submit = form.querySelector('button[type="submit"]');
                   const days = Number.parseInt(input.value, 10);
                   if (!Number.isFinite(days) || days < 1) {
-                    showToast('Log retention days must be at least 1.', 'warn');
+                    showToast('日志保留天数必须大于等于 1。', 'warn');
                     return;
                   }
                   submit.disabled = true;
@@ -1348,11 +1564,11 @@ def render_admin_page() -> str:
                       method: 'POST',
                       body: JSON.stringify({ log_retention_days: days }),
                     });
-                    showToast('Log retention updated.', 'success');
+                    showToast('日志保留策略已更新。', 'success');
                     await refreshBootstrap(false);
                     await ensureViewData('security');
                   } catch (error) {
-                    showToast(error.message || 'Failed to update log retention.', 'error');
+                    showToast(error.message || '更新日志保留策略失败。', 'error');
                   } finally {
                     submit.disabled = false;
                   }
@@ -1367,11 +1583,11 @@ def render_admin_page() -> str:
                 try {
                   if (action === 'reload-accounts') {
                     await ensureViewData('accounts');
-                    showToast('Account list refreshed.', 'success');
+                    showToast('账号列表已刷新。', 'success');
                   }
                   if (action === 'reload-logs') {
                     await ensureViewData('logs');
-                    showToast('Logs refreshed.', 'success');
+                    showToast('日志已刷新。', 'success');
                   }
                   if (action === 'disable-api-password') {
                     button.disabled = true;
@@ -1379,7 +1595,7 @@ def render_admin_page() -> str:
                       method: 'POST',
                       body: JSON.stringify({ disable_api_password: true }),
                     });
-                    showToast('API password disabled.', 'success');
+                    showToast('API 密码认证已关闭。', 'success');
                     await refreshBootstrap(false);
                     await ensureViewData('security');
                   }
@@ -1387,7 +1603,7 @@ def render_admin_page() -> str:
                     const accountId = button.dataset.accountId;
                     button.disabled = true;
                     await api(`/api/admin/accounts/${accountId}/check`, { method: 'POST' });
-                    showToast('Account health check finished.', 'success');
+                    showToast('账号健康检查已完成。', 'success');
                     await refreshBootstrap(false);
                     await ensureViewData('accounts');
                   }
@@ -1396,12 +1612,12 @@ def render_admin_page() -> str:
                     const enabled = button.dataset.enabled === '1';
                     button.disabled = true;
                     await api(`/api/admin/accounts/${accountId}/${enabled ? 'disable' : 'enable'}`, { method: 'POST' });
-                    showToast(enabled ? 'Account disabled.' : 'Account enabled.', 'success');
+                    showToast(enabled ? '账号已禁用。' : '账号已启用。', 'success');
                     await refreshBootstrap(false);
                     await ensureViewData('accounts');
                   }
                 } catch (error) {
-                  showToast(error.message || 'Action failed.', 'error');
+                  showToast(error.message || '操作失败。', 'error');
                 } finally {
                   button.disabled = false;
                 }
@@ -1425,10 +1641,10 @@ def render_admin_page() -> str:
                   await api('/api/admin/logout', { method: 'POST' });
                   state.loggedIn = false;
                   state.currentView = 'overview';
-                  showToast('Signed out.', 'success');
+                  showToast('已退出登录。', 'success');
                   await refreshBootstrap(false);
                 } catch (error) {
-                  showToast(error.message || 'Failed to sign out.', 'error');
+                  showToast(error.message || '退出登录失败。', 'error');
                 } finally {
                   setTopBusy(false);
                 }
@@ -1442,7 +1658,7 @@ def render_admin_page() -> str:
                   }
                 } catch (error) {
                   console.error(error);
-                  showToast('Failed to initialize control center.', 'error');
+                  showToast('初始化控制台失败。', 'error');
                 }
               })();
             </script>

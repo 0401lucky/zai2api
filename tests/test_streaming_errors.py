@@ -58,7 +58,7 @@ def test_chat_completion_stream_reports_error_in_band(tmp_path: Path) -> None:
     assert '"message": "upstream said no"' in response.text
     assert "data: [DONE]" in response.text
     logs = Database(settings.database_path).list_logs(limit=20)
-    assert any(item.message == "Streaming chat completion request failed" for item in logs)
+    assert any(item.message == "流式聊天补全请求失败" for item in logs)
 
 
 def test_responses_stream_reports_runtime_error_in_band(tmp_path: Path) -> None:
@@ -77,4 +77,4 @@ def test_responses_stream_reports_runtime_error_in_band(tmp_path: Path) -> None:
     assert '"message": "upstream stream exploded"' in response.text
     assert "data: [DONE]" in response.text
     logs = Database(settings.database_path).list_logs(limit=20)
-    assert any(item.message == "Streaming responses request failed" for item in logs)
+    assert any(item.message == "流式 Responses 请求失败" for item in logs)

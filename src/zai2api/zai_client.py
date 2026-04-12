@@ -100,7 +100,7 @@ class ZAIClient:
             if self._session:
                 return self._session
 
-            raise RuntimeError("Missing ZAI_JWT or ZAI_SESSION_TOKEN")
+            raise RuntimeError("缺少 ZAI_JWT 或 ZAI_SESSION_TOKEN")
 
     async def verify_completion_version(self) -> int:
         session = await self.ensure_session()
