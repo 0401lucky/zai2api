@@ -15,6 +15,8 @@ export interface AppConfig {
   adminSessionTtlSeconds: number;
   adminCookieSecure: boolean;
   accountPollIntervalSeconds: number;
+  accountErrorThreshold: number;
+  accountCooldownSeconds: number;
   logRetentionDaysEnv: number | null;
 }
 
@@ -41,6 +43,8 @@ export function loadConfig(env: CloudflareBindings): AppConfig {
     adminSessionTtlSeconds: ttlHours * 3600,
     adminCookieSecure: parseBoolean(env.ADMIN_COOKIE_SECURE, true),
     accountPollIntervalSeconds: parseInteger(env.ACCOUNT_POLL_INTERVAL_SECONDS, 300),
+    accountErrorThreshold: parseInteger(env.ACCOUNT_ERROR_THRESHOLD, 3),
+    accountCooldownSeconds: parseInteger(env.ACCOUNT_COOLDOWN_SECONDS, 60),
     logRetentionDaysEnv: env.LOG_RETENTION_DAYS ? parseInteger(env.LOG_RETENTION_DAYS, DEFAULT_LOG_RETENTION_DAYS) : null,
   };
 }

@@ -182,6 +182,18 @@ export class AccountPool {
       label: account.email ?? account.userId ?? `account-${account.id}`,
       persistent: true,
     }));
+
+    const cooldown =
+      this.config.accountCooldownSeconds > 0
+        ? (await this.repository.listCooldownAccounts(this.config.accountCooldownSeconds)).map((account) => ({
+            accountId: account.id,
+            jwt: account.jwt,
+            sessionToken: account.sessionToken,
+            label: account.email ?? account.userId ?? `account-${account.id}`,
+            persistent: true,
+          }))
+        : [];
+
     const envFallback =
       this.config.zaiJwt || this.config.zaiSessionToken
         ? [
@@ -195,10 +207,12 @@ export class AccountPool {
           ]
         : [];
 
-    if (persisted.length) {
-      const start = accountCursor % persisted.length;
-      accountCursor = (start + 1) % persisted.length;
-      return [...persisted.slice(start), ...persisted.slice(0, start), ...envFallback];
+    if (persisted.length || cooldown.length) {
+      const start = persisted.length ? accountCursor % persisted.length : 0;
+      if (persisted.length) {
+        accountCursor = (start + 1) % persisted.length;
+      }
+      return [...persisted.slice(start), ...persisted.slice(0, start), ...cooldown, ...envFallback];
     }
     if (envFallback.length) {
       return envFallback;
@@ -222,15 +236,19 @@ export class AccountPool {
   private async handleFailure(routed: RoutedAccount, error: unknown): Promise<void> {
     const disable = this.shouldDisable(error);
     const errorText = describeHttpError(error);
+    let escalated = false;
+    if (routed.persistent && routed.accountId !== null) {
+      const account = await this.repository.getAccount(routed.accountId);
+      const currentFailures = account ? account.failureCount : 0;
+      escalated = !disable && currentFailures + 1 >= this.config.accountErrorThreshold;
+      await this.repository.markAccountFailure(routed.accountId, errorText, disable, this.config.accountErrorThreshold);
+    }
     await this.repository.addLog({
       level: "warning",
       category: "accounts",
-      message: "账号请求失败",
-      details: { account: routed.label, disable, error: errorText },
+      message: disable ? "账号认证失败已停用" : escalated ? "账号连续失败已移出候选池" : "账号请求临时失败（保留在候选池）",
+      details: { account: routed.label, disable, escalated, error: errorText },
     });
-    if (routed.persistent && routed.accountId !== null) {
-      await this.repository.markAccountFailure(routed.accountId, errorText, disable);
-    }
   }
 
   private shouldDisable(error: unknown): boolean {

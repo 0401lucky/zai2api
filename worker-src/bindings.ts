@@ -17,6 +17,8 @@ export interface CloudflareBindings {
   REQUEST_TIMEOUT?: string;
   LOG_RETENTION_DAYS?: string;
   ACCOUNT_POLL_INTERVAL_SECONDS?: string;
+  ACCOUNT_ERROR_THRESHOLD?: string;
+  ACCOUNT_COOLDOWN_SECONDS?: string;
   ADMIN_COOKIE_NAME?: string;
   ADMIN_SESSION_TTL_HOURS?: string;
   ADMIN_COOKIE_SECURE?: string;

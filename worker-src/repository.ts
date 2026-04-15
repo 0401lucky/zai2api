@@ -235,16 +235,18 @@ export class D1Repository {
       .run();
   }
 
-  async markAccountFailure(accountId: number, error: string, disable: boolean): Promise<void> {
+  async markAccountFailure(accountId: number, error: string, disable: boolean, threshold = 1): Promise<void> {
     const now = nowSeconds();
     const row = await this.db
-      .prepare("SELECT failure_count FROM accounts WHERE id = ?")
+      .prepare("SELECT failure_count, status FROM accounts WHERE id = ?")
       .bind(accountId)
-      .first<{ failure_count: number }>();
+      .first<{ failure_count: number; status: string }>();
     if (!row) {
       return;
     }
     const failureCount = Number(row.failure_count ?? 0) + 1;
+    const shouldMarkError = !disable && failureCount >= threshold;
+    const nextStatus = disable ? "invalid" : shouldMarkError ? "error" : row.status;
     await this.db
       .prepare(
         `UPDATE accounts
@@ -256,8 +258,24 @@ export class D1Repository {
              updated_at = ?
          WHERE id = ?`,
       )
-      .bind(disable ? 1 : 0, disable ? "invalid" : "error", now, error, failureCount, now, accountId)
+      .bind(disable ? 1 : 0, nextStatus, now, error, failureCount, now, accountId)
       .run();
+  }
+
+  async listCooldownAccounts(cooldownSeconds: number): Promise<AccountRecord[]> {
+    const cutoff = nowSeconds() - cooldownSeconds;
+    const result = await this.db
+      .prepare(
+        `SELECT * FROM accounts
+         WHERE enabled = 1
+           AND status = 'error'
+           AND (session_token IS NOT NULL OR jwt IS NOT NULL)
+           AND last_checked_at <= ?
+         ORDER BY failure_count ASC, last_checked_at ASC`,
+      )
+      .bind(cutoff)
+      .all<AccountRow>();
+    return Promise.all((result.results ?? []).map((row) => this.rowToAccount(row)));
   }
 
   async addLog(input: {
