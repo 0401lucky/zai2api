@@ -1,58 +1,109 @@
 # zai2api
 
-基于 `https://chat.z.ai/` 的 OpenAI 兼容聊天 / 补全代理服务。
+面向 **Cloudflare Workers** 的 Z.ai OpenAI 兼容代理，内置中文后台，可管理账号池、安全设置与审计日志。
 
-## 功能特性
+## 当前架构
 
-- 支持 `POST /v1/chat/completions`
-- 支持 `POST /v1/responses`
-- 每次请求都会创建一条全新的上游会话
-- 将推理内容与最终回答文本分开保留
-- 支持直接复用 `ZAI_SESSION_TOKEN`，或通过 `ZAI_JWT` 自动刷新会话
-- 内置中文管理页，可管理账号、安全设置和审计日志
+- 运行时：`TypeScript + Hono + Cloudflare Workers`
+- 持久化：`D1`
+- 后台页面：`Workers Assets`
+- 上游：`https://chat.z.ai`
 
-## 运行要求
+## 已提供能力
 
-- Python 3.12+
-- `uv`
-- 以下凭证二选一：
-  - `ZAI_JWT`
-  - `ZAI_SESSION_TOKEN`
+- `POST /v1/chat/completions`
+- `POST /v1/responses`
+- `GET /v1/models`
+- 中文后台：初始化、登录、账号管理、安全设置、日志查看
+- 支持 `ZAI_JWT` 自动刷新会话
+- 支持 `ZAI_SESSION_TOKEN` 直连并先走 `/api/v1/auths/` 校验/刷新
+- 支持持久化账号失败后回退到环境变量账号
 
-## 启动方式
+## 本地开发
 
-```bash
-export ZAI_JWT='your-jwt'
-uv run python -m zai2api
-```
-
-或者使用安装后的脚本：
+1. 安装依赖
 
 ```bash
-export ZAI_JWT='your-jwt'
-uv run zai2api
+npm install
 ```
 
-默认监听地址为 `0.0.0.0:8000`。
+2. 复制开发变量
 
-## 环境变量
+```bash
+cp .dev.vars.example .dev.vars
+```
 
-- `ZAI_JWT`：首选认证来源，用于换取新的会话令牌
-- `ZAI_SESSION_TOKEN`：可选，直接复用已有会话令牌
-- `DEFAULT_MODEL`：默认值为 `glm-5`
-- 可用公开模型 ID：`glm-5`、`glm-5.1`、`glm-5-turbo`，以及它们的 `-nothinking` 变体
-- `HOST`：默认值为 `0.0.0.0`
-- `PORT`：默认值为 `8000`
-- `LOG_LEVEL`：默认值为 `info`
-- `REQUEST_TIMEOUT`：默认值为 `120`
+3. 创建 D1 数据库并把 `wrangler.jsonc` 里的 `database_id` 改成真实值
 
-## 请求示例
+```bash
+npx wrangler d1 create zai2api
+```
+
+4. 应用迁移
+
+```bash
+npx wrangler d1 migrations apply zai2api
+```
+
+5. 启动本地开发
+
+```bash
+npm run dev
+```
+
+## Cloudflare 部署
+
+1. 创建 D1 数据库并更新 `wrangler.jsonc`
+2. 配置 Secrets
+
+```bash
+npx wrangler secret put ACCOUNT_ENCRYPTION_KEY
+npx wrangler secret put SETUP_TOKEN
+npx wrangler secret put PANEL_PASSWORD
+npx wrangler secret put API_PASSWORD
+npx wrangler secret put ZAI_JWT
+```
+
+说明：
+
+- `ACCOUNT_ENCRYPTION_KEY`：必填，用于加密存储账号凭证
+- `SETUP_TOKEN`：必填，用于首次初始化后台，避免匿名占坑
+- `PANEL_PASSWORD`：建议首发时直接设置；若不设置，则必须带 `SETUP_TOKEN` 先完成一次初始化
+- `API_PASSWORD`：可选，不填则 `/v1/*` 默认不开启密码
+- `ZAI_JWT` 或 `ZAI_SESSION_TOKEN`：二选一即可，推荐 `ZAI_JWT`
+
+3. 应用 D1 迁移
+
+```bash
+npx wrangler d1 migrations apply zai2api --remote
+```
+
+4. 部署
+
+```bash
+npm run deploy
+```
+
+## 关键变量
+
+- `ZAI_JWT`：首选认证来源
+- `ZAI_SESSION_TOKEN`：可选，会先向 `/api/v1/auths/` 校验/刷新
+- `DEFAULT_MODEL`：默认 `glm-5`
+- `REQUEST_TIMEOUT`：默认 `120` 秒
+- `LOG_RETENTION_DAYS`：默认 `7`
+- `ACCOUNT_POLL_INTERVAL_SECONDS`：默认 `300`
+- `ADMIN_COOKIE_NAME`：默认 `zai2api_admin_session`
+- `ADMIN_SESSION_TTL_HOURS`：默认 `168`
+- `ADMIN_COOKIE_SECURE`：默认 `true`
+
+## API 示例
 
 ### Chat Completions
 
 ```bash
-curl http://127.0.0.1:8000/v1/chat/completions \
+curl https://your-worker.example.com/v1/chat/completions \
   -H 'content-type: application/json' \
+  -H 'authorization: Bearer your-api-password' \
   -d '{
     "model": "glm-5",
     "messages": [
@@ -62,13 +113,19 @@ curl http://127.0.0.1:8000/v1/chat/completions \
   }'
 ```
 
-### Responses API
+### Responses
 
 ```bash
-curl http://127.0.0.1:8000/v1/responses \
+curl https://your-worker.example.com/v1/responses \
   -H 'content-type: application/json' \
+  -H 'authorization: Bearer your-api-password' \
   -d '{
     "model": "glm-5",
     "input": "打个招呼。"
   }'
 ```
+
+## 兼容说明
+
+- 仓库中仍保留原 Python 代码作为迁移参考
+- Cloudflare 版为当前主线，后续新增功能默认在 `worker-src/` 和 `public/` 中演进

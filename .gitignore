@@ -27,6 +27,10 @@ wheels/
 
 # Virtual environments
 .venv/
+node_modules/
+.wrangler/
+.dev.vars
+.dev.vars.*
 
 # IDE / OS files
 .DS_Store

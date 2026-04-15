@@ -1,0 +1,32 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "zai2api",
+  "main": "worker-src/index.ts",
+  "compatibility_date": "2025-04-15",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+  "observability": {
+    "enabled": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "zai2api",
+      "database_id": "2221ed4d-dc1d-4469-9996-17fe43dc5305",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    "DEFAULT_MODEL": "glm-5",
+    "LOG_LEVEL": "info",
+    "REQUEST_TIMEOUT": "120",
+    "LOG_RETENTION_DAYS": "7",
+    "ACCOUNT_POLL_INTERVAL_SECONDS": "300",
+    "ADMIN_COOKIE_NAME": "zai2api_admin_session",
+    "ADMIN_SESSION_TTL_HOURS": "168",
+    "ADMIN_COOKIE_SECURE": "true",
+    "ZAI_BASE_URL": "https://chat.z.ai"
+  }
+}
