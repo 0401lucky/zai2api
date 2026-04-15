@@ -9,7 +9,6 @@ export const PUBLIC_MODEL_ALIASES: Record<string, string> = {
   "glm-5": "glm-5",
   "glm-5.1": "GLM-5.1",
   "glm-5-turbo": "GLM-5-Turbo",
-  "glm-4.7": "GLM-4.7",
 };
 const UPSTREAM_TO_PUBLIC_MAP = Object.fromEntries(
   Object.entries(PUBLIC_MODEL_ALIASES).map(([publicName, upstream]) => [upstream, publicName]),
