@@ -8,7 +8,7 @@ import httpx
 
 from .config import Settings
 from .db import AccountRecord, Database
-from .zai_client import SessionState, UpstreamResult, ZAIClient
+from .zai_client import SessionState, UpstreamResult, ZAIClient, describe_http_error
 
 
 class SupportsZAIClient(Protocol):
@@ -302,6 +302,6 @@ class AccountPool:
         return False
 
     def _describe_error(self, error: Exception) -> str:
-        if isinstance(error, httpx.HTTPStatusError):
-            return f"HTTP {error.response.status_code}"
+        if isinstance(error, httpx.HTTPError):
+            return describe_http_error(error)
         return str(error)

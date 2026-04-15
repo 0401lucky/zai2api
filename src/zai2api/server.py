@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Protocol
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
@@ -17,7 +18,7 @@ from .auth import AuthService
 from .config import DEFAULT_LOG_RETENTION_DAYS, Settings, settings
 from .db import AccountRecord, Database, LOG_RETENTION_DAYS_KEY, LogRecord
 from .prompt_assembly import assemble_prompt
-from .zai_client import UpstreamResult, ZAIClient, normalize_usage
+from .zai_client import UpstreamResult, ZAIClient, describe_http_error, normalize_usage
 
 
 class SupportsPromptPool(Protocol):
@@ -281,7 +282,13 @@ def create_app(
         jwt = str(payload.get("jwt") or "").strip()
         if not jwt:
             raise HTTPException(status_code=400, detail="缺少 JWT")
-        account = await pool.register_jwt(jwt)
+        try:
+            account = await pool.register_jwt(jwt)
+        except (RuntimeError, httpx.HTTPError) as exc:
+            raise HTTPException(
+                status_code=request_failure_status_code(exc),
+                detail=request_failure_detail(exc),
+            ) from exc
         return JSONResponse({"account": serialize_account(account)})
 
     @app.post("/api/admin/accounts/{account_id}/enable")
@@ -425,7 +432,8 @@ def create_app(
                 enable_thinking=enable_thinking,
                 auto_web_search=False,
             )
-        except RuntimeError as exc:
+        except (RuntimeError, httpx.HTTPError) as exc:
+            detail = request_failure_detail(exc)
             current_services.db.add_log(
                 level="warning",
                 category="requests",
@@ -435,12 +443,12 @@ def create_app(
                     "model": requested_model,
                     "stream": False,
                     "enable_thinking": enable_thinking,
-                    "error": str(exc),
+                    "error": detail,
                 },
             )
             raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=str(exc),
+                status_code=request_failure_status_code(exc),
+                detail=detail,
             ) from exc
 
         response = {
@@ -512,7 +520,8 @@ def create_app(
                 enable_thinking=enable_thinking,
                 auto_web_search=False,
             )
-        except RuntimeError as exc:
+        except (RuntimeError, httpx.HTTPError) as exc:
+            detail = request_failure_detail(exc)
             current_services.db.add_log(
                 level="warning",
                 category="requests",
@@ -522,12 +531,12 @@ def create_app(
                     "model": requested_model,
                     "stream": False,
                     "enable_thinking": enable_thinking,
-                    "error": str(exc),
+                    "error": detail,
                 },
             )
             raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=str(exc),
+                status_code=request_failure_status_code(exc),
+                detail=detail,
             ) from exc
 
         response = {
@@ -643,7 +652,8 @@ async def stream_chat_completions(
                     "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
                 }
             )
-    except RuntimeError as exc:
+    except (RuntimeError, httpx.HTTPError) as exc:
+        detail = request_failure_detail(exc)
         db.add_log(
             level="warning",
             category="requests",
@@ -655,14 +665,14 @@ async def stream_chat_completions(
                 "enable_thinking": enable_thinking,
                 "answer_chars": answer_chars,
                 "reasoning_chars": reasoning_chars,
-                "error": str(exc),
+                "error": detail,
             },
         )
         yield chat_stream_error_event(
             completion_id=completion_id,
             created=created,
             model=model,
-            message=str(exc),
+            message=detail,
         )
         yield b"data: [DONE]\n\n"
         return
@@ -827,7 +837,8 @@ async def stream_responses(
                     "delta": chunk.text,
                 }
             )
-    except RuntimeError as exc:
+    except (RuntimeError, httpx.HTTPError) as exc:
+        detail = request_failure_detail(exc)
         db.add_log(
             level="warning",
             category="requests",
@@ -839,14 +850,14 @@ async def stream_responses(
                 "enable_thinking": enable_thinking,
                 "answer_chars": len("".join(answer_parts)),
                 "reasoning_chars": len("".join(reasoning_parts)),
-                "error": str(exc),
+                "error": detail,
             },
         )
         yield response_stream_failed_event(
             response_id=response_id,
             created=created,
             model=model,
-            message=str(exc),
+            message=detail,
         )
         yield b"data: [DONE]\n\n"
         return
@@ -983,6 +994,18 @@ def require_managed_account_pool(services: AppServices) -> AccountPool:
     if services.account_pool is not None:
         return services.account_pool
     raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="账号管理功能当前不可用")
+
+
+def request_failure_detail(error: Exception) -> str:
+    if isinstance(error, httpx.HTTPError):
+        return describe_http_error(error)
+    return str(error)
+
+
+def request_failure_status_code(error: Exception) -> int:
+    if isinstance(error, httpx.HTTPError):
+        return status.HTTP_502_BAD_GATEWAY
+    return status.HTTP_503_SERVICE_UNAVAILABLE
 
 
 def enforce_api_password(request: Request, services: AppServices) -> None:

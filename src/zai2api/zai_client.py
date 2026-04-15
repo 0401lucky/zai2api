@@ -70,6 +70,7 @@ class ZAIClient:
         )
         self._lock = asyncio.Lock()
         self._session: SessionState | None = None
+        self._session_validated = False
         if self.zai_session_token:
             self._session = self._session_from_token(self.zai_session_token)
 
@@ -78,26 +79,19 @@ class ZAIClient:
 
     async def ensure_session(self, force_refresh: bool = False) -> SessionState:
         async with self._lock:
-            if self._session and not force_refresh:
+            if self._session and not force_refresh and (self.zai_jwt or self._session_validated):
                 return self._session
 
             if self.zai_jwt:
-                response = await self._client.get(
-                    "/api/v1/auths/",
-                    headers={"Authorization": f"Bearer {self.zai_jwt}"},
-                )
-                response.raise_for_status()
-                payload = response.json()
-                self._session = SessionState(
-                    token=payload["token"],
-                    user_id=payload["id"],
-                    name=payload.get("name", ""),
-                    email=payload.get("email", ""),
-                    role=payload.get("role", "user"),
-                )
+                self._session = await self._exchange_token(self.zai_jwt)
+                self._session_validated = True
                 return self._session
 
-            if self._session:
+            if self.zai_session_token:
+                token = self._session.token if self._session is not None else self.zai_session_token
+                self._session = await self._exchange_token(token)
+                self.zai_session_token = self._session.token
+                self._session_validated = True
                 return self._session
 
             raise RuntimeError("缺少 ZAI_JWT 或 ZAI_SESSION_TOKEN")
@@ -400,6 +394,21 @@ class ZAIClient:
             "{{USER_LANGUAGE}}": "en-US",
         }
 
+    async def _exchange_token(self, token: str) -> SessionState:
+        response = await self._client.get(
+            "/api/v1/auths/",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return SessionState(
+            token=payload["token"],
+            user_id=payload["id"],
+            name=payload.get("name", ""),
+            email=payload.get("email", ""),
+            role=payload.get("role", "user"),
+        )
+
     def _session_from_token(self, token: str) -> SessionState:
         try:
             payload_b64 = token.split(".")[1]
@@ -427,3 +436,15 @@ def normalize_usage(usage: Any) -> dict[str, int]:
         "completion_tokens": completion_tokens,
         "total_tokens": total_tokens,
     }
+
+
+def describe_http_error(error: httpx.HTTPError) -> str:
+    if isinstance(error, httpx.HTTPStatusError):
+        request = error.request
+        method = request.method if request is not None else "UNKNOWN"
+        path = request.url.path if request is not None else ""
+        location = f"{method} {path}".strip()
+        if location:
+            return f"上游接口错误: {location} -> HTTP {error.response.status_code}"
+        return f"上游接口错误: HTTP {error.response.status_code}"
+    return f"上游请求失败: {error.__class__.__name__}: {error}"
