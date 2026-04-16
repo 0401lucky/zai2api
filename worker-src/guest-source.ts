@@ -1,7 +1,7 @@
 import type { GuestSourceSnapshot, SessionState, UpstreamChunk, UpstreamResult } from "./bindings";
-import { GUEST_SOURCE_STATE_KEY, type AppConfig } from "./config";
+import { GUEST_SOURCE_ENABLED_KEY, GUEST_SOURCE_STATE_KEY, type AppConfig } from "./config";
 import { D1Repository } from "./repository";
-import { nowSeconds, safeJsonParse } from "./utils";
+import { nowSeconds, parseBoolean, safeJsonParse } from "./utils";
 import { UpstreamHttpError, ZAIClient, describeHttpError, requestGuestSession } from "./zai-client";
 
 type PromptRequest = {
@@ -63,16 +63,38 @@ export class GuestSourceManager {
     private readonly sessionFactory: GuestSessionFactory = () => requestGuestSession(config),
   ) {}
 
-  isEnabled(): boolean {
+  async isEnabled(): Promise<boolean> {
+    if (this.config.guestEnabledEnv !== null) {
+      return this.config.guestEnabledEnv;
+    }
+    const stored = await this.repository.getSetting(GUEST_SOURCE_ENABLED_KEY);
+    if (stored !== null) {
+      return parseBoolean(stored, false);
+    }
     return this.config.guestEnabled;
   }
 
+  async enabledSource(): Promise<"env" | "database" | "default"> {
+    if (this.config.guestEnabledEnv !== null) {
+      return "env";
+    }
+    if ((await this.repository.getSetting(GUEST_SOURCE_ENABLED_KEY)) !== null) {
+      return "database";
+    }
+    return "default";
+  }
+
+  async updateEnabled(enabled: boolean): Promise<void> {
+    await this.repository.setSetting(GUEST_SOURCE_ENABLED_KEY, enabled ? "true" : "false");
+  }
+
   async getSnapshot(): Promise<GuestSourceSnapshot> {
+    const enabled = await this.isEnabled();
     const state = this.normalizeForSnapshot(await this.readState());
     return {
-      enabled: this.config.guestEnabled,
-      status: this.config.guestEnabled ? state.status : "disabled",
-      inRotation: this.config.guestEnabled && this.isEligible(state),
+      enabled,
+      status: enabled ? state.status : "disabled",
+      inRotation: enabled && this.isEligible(state),
       lastRefreshedAt: state.lastRefreshedAt,
       lastError: state.lastError,
       requestCount: state.requestCount,
@@ -82,7 +104,7 @@ export class GuestSourceManager {
   }
 
   async collectPrompt(input: PromptRequest): Promise<UpstreamResult> {
-    this.ensureEnabled();
+    await this.ensureEnabled();
     let lastError: unknown;
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -114,7 +136,7 @@ export class GuestSourceManager {
   }
 
   async *streamPrompt(input: PromptRequest): AsyncGenerator<UpstreamChunk> {
-    this.ensureEnabled();
+    await this.ensureEnabled();
     let lastError: unknown;
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -290,8 +312,8 @@ export class GuestSourceManager {
     return state.status !== "cooldown";
   }
 
-  private ensureEnabled(): void {
-    if (!this.config.guestEnabled) {
+  private async ensureEnabled(): Promise<void> {
+    if (!(await this.isEnabled())) {
       throw new Error("游客来源未启用");
     }
   }

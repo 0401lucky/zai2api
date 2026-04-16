@@ -21,5 +21,6 @@ describe("config", () => {
       ZAI_GUEST_ENABLED: "true",
     });
     expect(config.guestEnabled).toBe(true);
+    expect(config.guestEnabledEnv).toBe(true);
   });
 });

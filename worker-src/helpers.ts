@@ -77,6 +77,8 @@ export async function serializeSecuritySettings(services: AppServices): Promise<
   const panelSource = await services.auth.panelPasswordSource();
   const apiSource = await services.auth.apiPasswordSource();
   const logRetentionSource = await logRetentionDaysSource(services);
+  const guestSource = await services.guestSource.getSnapshot();
+  const guestSourceSetting = await guestSourceEnabledSetting(services);
   return {
     panel_password: {
       source: panelSource,
@@ -93,6 +95,12 @@ export async function serializeSecuritySettings(services: AppServices): Promise<
       source: logRetentionSource,
       overridden_by_env: logRetentionSource === "env",
       default_active: logRetentionSource === "default",
+    },
+    guest_source: {
+      enabled: guestSource.enabled,
+      source: guestSourceSetting,
+      overridden_by_env: guestSourceSetting === "env",
+      default_active: guestSourceSetting === "default",
     },
     poll_interval_seconds: services.config.accountPollIntervalSeconds,
   };
@@ -120,6 +128,10 @@ export async function logRetentionDaysSource(services: AppServices): Promise<Pas
     return "database";
   }
   return "default";
+}
+
+export async function guestSourceEnabledSetting(services: AppServices): Promise<PasswordSource | "default"> {
+  return await services.guestSource.enabledSource();
 }
 
 export function logRetentionCutoff(retentionDays: number): number {

@@ -221,6 +221,12 @@ body {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.form-note {
+  margin: -4px 0 0;
+  grid-column: 1 / -1;
+  font-size: 13px;
+}
+
 label {
   display: grid;
   gap: 8px;

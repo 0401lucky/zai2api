@@ -242,6 +242,11 @@ export function createAdminRoutes(): Hono<AppEnv> {
       changed.push("log_retention_days");
     }
 
+    if (payload.guest_enabled !== undefined && payload.guest_enabled !== null) {
+      await services.guestSource.updateEnabled(Boolean(payload.guest_enabled));
+      changed.push("guest_source");
+    }
+
     if (!changed.length) {
       throw new HTTPException(400, { message: "未提交任何安全配置变更" });
     }

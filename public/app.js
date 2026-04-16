@@ -141,6 +141,11 @@ function renderSecurity() {
   if (!state.security) return;
   const form = document.getElementById("security-form");
   form.log_retention_days.value = state.security.log_retention?.days || 7;
+  form.guest_enabled.checked = Boolean(state.security.guest_source?.enabled);
+  form.guest_enabled.disabled = Boolean(state.security.guest_source?.overridden_by_env);
+  document.getElementById("guest-source-setting-note").textContent = state.security.guest_source?.overridden_by_env
+    ? "游客来源由环境变量控制，后台不可修改。"
+    : `当前来源：${guestSettingSourceLabel(state.security.guest_source?.source)}。`;
 }
 
 function renderLogs() {
@@ -234,6 +239,19 @@ function guestStatusClass(guest) {
   return "idle";
 }
 
+function guestSettingSourceLabel(source) {
+  switch (source) {
+    case "env":
+      return "环境变量";
+    case "database":
+      return "后台设置";
+    case "default":
+      return "默认值";
+    default:
+      return String(source || "未知");
+  }
+}
+
 document.getElementById("setup-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
@@ -297,12 +315,16 @@ document.getElementById("security-form").addEventListener("submit", async (event
   event.preventDefault();
   const form = event.currentTarget;
   const data = new FormData(form);
+  const guestEnabledField = form.elements.namedItem("guest_enabled");
   const payload = {
     panel_password: data.get("panel_password"),
     api_password: data.get("api_password"),
     disable_api_password: data.get("disable_api_password") === "on",
     log_retention_days: data.get("log_retention_days"),
   };
+  if (guestEnabledField && !guestEnabledField.disabled) {
+    payload.guest_enabled = data.get("guest_enabled") === "on";
+  }
   try {
     state.security = await api("/api/admin/settings/security", { method: "POST", body: JSON.stringify(payload) });
     showToast("安全设置已更新");

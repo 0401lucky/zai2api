@@ -30,6 +30,7 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     zaiJwt: null,
     zaiSessionToken: null,
     guestEnabled: true,
+    guestEnabledEnv: null,
     setupToken: null,
     defaultModel: "glm-5",
     requestTimeoutMs: 1000,
@@ -57,6 +58,31 @@ function makeSession(token: string, userId: string): SessionState {
 }
 
 describe("guest source", () => {
+  it("可从数据库设置决定是否启用", async () => {
+    const repository = new FakeRepository();
+    const manager = new GuestSourceManager(
+      makeConfig({ guestEnabled: false, guestEnabledEnv: null }),
+      repository as unknown as D1Repository,
+      (() =>
+        ({
+          collectPrompt: async (): Promise<UpstreamResult> => ({
+            answerText: "hello",
+            reasoningText: "",
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+            finishReason: "stop",
+          }),
+          ensureSession: async (): Promise<SessionState> => makeSession("guest-token-1", "guest-user-1"),
+          streamPrompt: async function* (): AsyncGenerator<UpstreamChunk> {},
+        }) as unknown as ZAIClient),
+      async () => makeSession("guest-token-1", "guest-user-1"),
+    );
+
+    expect(await manager.isEnabled()).toBe(false);
+    await manager.updateEnabled(true);
+    expect(await manager.isEnabled()).toBe(true);
+    expect(await manager.enabledSource()).toBe("database");
+  });
+
   it("缓存复用并在 401 后重建游客会话", async () => {
     const repository = new FakeRepository();
     const sessions = [makeSession("guest-token-1", "guest-user-1"), makeSession("guest-token-2", "guest-user-2")];
