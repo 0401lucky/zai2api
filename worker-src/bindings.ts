@@ -11,6 +11,7 @@ export interface CloudflareBindings {
   API_PASSWORD?: string;
   ZAI_JWT?: string;
   ZAI_SESSION_TOKEN?: string;
+  ZAI_GUEST_ENABLED?: string;
   ZAI_BASE_URL?: string;
   DEFAULT_MODEL?: string;
   LOG_LEVEL?: string;
@@ -27,6 +28,7 @@ export interface CloudflareBindings {
 
 export type PasswordSource = "env" | "database" | "disabled";
 export type AccountStatus = "active" | "unknown" | "disabled" | "invalid" | "error";
+export type GuestSourceStatus = "disabled" | "idle" | "active" | "cooldown" | "error";
 
 export interface AccountRecord {
   id: number;
@@ -81,4 +83,15 @@ export interface UpstreamResult {
   reasoningText: string;
   usage: TokenUsage;
   finishReason: string;
+}
+
+export interface GuestSourceSnapshot {
+  enabled: boolean;
+  status: GuestSourceStatus;
+  inRotation: boolean;
+  lastRefreshedAt: number | null;
+  lastError: string | null;
+  requestCount: number;
+  cooldownUntil: number | null;
+  lastUserId: string | null;
 }

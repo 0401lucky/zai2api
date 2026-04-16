@@ -1,4 +1,4 @@
-import type { AccountRecord, LogRecord, PasswordSource } from "./bindings";
+import type { AccountRecord, GuestSourceSnapshot, LogRecord, PasswordSource } from "./bindings";
 import { DEFAULT_LOG_RETENTION_DAYS, LOG_RETENTION_DAYS_KEY, type AppConfig } from "./config";
 import type { AppServices } from "./services";
 import { maskSecret, nowSeconds, randomId } from "./utils";
@@ -17,11 +17,16 @@ const UPSTREAM_TO_PUBLIC_MAP = Object.fromEntries(
 export async function accountSummary(services: AppServices): Promise<Record<string, unknown>> {
   const persistedHealthy = (await services.repository.listAccounts({ enabledOnly: true, healthyOnly: true })).length;
   const persistedEnabled = await services.repository.countAccounts(true);
+  const guestSource = await services.guestSource.getSnapshot();
   return {
     persisted_total: await services.repository.countAccounts(false),
     persisted_enabled: persistedEnabled,
     persisted_healthy: persistedHealthy,
-    using_env_fallback: persistedHealthy === 0 && Boolean(services.config.zaiJwt || services.config.zaiSessionToken),
+    using_guest_source: persistedHealthy === 0 && guestSource.inRotation,
+    using_env_fallback:
+      persistedHealthy === 0 &&
+      !guestSource.inRotation &&
+      Boolean(services.config.zaiJwt || services.config.zaiSessionToken),
   };
 }
 
@@ -41,6 +46,19 @@ export function serializeAccount(account: AccountRecord): Record<string, unknown
     masked_session_token: maskSecret(account.sessionToken),
     created_at: account.createdAt,
     updated_at: account.updatedAt,
+  };
+}
+
+export function serializeGuestSource(source: GuestSourceSnapshot): Record<string, unknown> {
+  return {
+    enabled: source.enabled,
+    status: source.status,
+    in_rotation: source.inRotation,
+    last_refreshed_at: source.lastRefreshedAt,
+    last_error: source.lastError,
+    request_count: source.requestCount,
+    cooldown_until: source.cooldownUntil,
+    last_user_id: source.lastUserId,
   };
 }
 

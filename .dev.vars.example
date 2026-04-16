@@ -4,3 +4,4 @@ PANEL_PASSWORD=replace-with-your-admin-password
 # API_PASSWORD=replace-with-your-openai-api-password
 # ZAI_JWT=replace-with-your-zai-jwt
 # ZAI_SESSION_TOKEN=replace-with-your-zai-session-token
+# ZAI_GUEST_ENABLED=true

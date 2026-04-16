@@ -17,6 +17,7 @@
 - 中文后台：初始化、登录、账号管理、安全设置、日志查看
 - 支持 `ZAI_JWT` 自动刷新会话
 - 支持 `ZAI_SESSION_TOKEN` 直连并先走 `/api/v1/auths/` 校验/刷新
+- 支持 `ZAI_GUEST_ENABLED=true` 开启游客来源，并在后台单独展示游客状态
 - 支持持久化账号失败后回退到环境变量账号
 
 ## 本地开发
@@ -71,6 +72,7 @@ npx wrangler secret put ZAI_JWT
 - `PANEL_PASSWORD`：建议首发时直接设置；若不设置，则必须带 `SETUP_TOKEN` 先完成一次初始化
 - `API_PASSWORD`：可选，不填则 `/v1/*` 默认不开启密码
 - `ZAI_JWT` 或 `ZAI_SESSION_TOKEN`：二选一即可，推荐 `ZAI_JWT`
+- `ZAI_GUEST_ENABLED`：可选，设为 `true` 后可启用游客来源；默认关闭
 
 3. 应用 D1 迁移
 
@@ -88,6 +90,7 @@ npm run deploy
 
 - `ZAI_JWT`：首选认证来源
 - `ZAI_SESSION_TOKEN`：可选，会先向 `/api/v1/auths/` 校验/刷新
+- `ZAI_GUEST_ENABLED`：显式开启游客来源，默认 `false`
 - `DEFAULT_MODEL`：默认 `glm-5`
 - `REQUEST_TIMEOUT`：默认 `120` 秒
 - `LOG_RETENTION_DAYS`：默认 `7`

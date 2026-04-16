@@ -6,6 +6,7 @@ export interface AppConfig {
   zaiBaseUrl: string;
   zaiJwt: string | null;
   zaiSessionToken: string | null;
+  guestEnabled: boolean;
   setupToken: string | null;
   defaultModel: string;
   requestTimeoutMs: number;
@@ -26,6 +27,7 @@ export const PANEL_PASSWORD_KEY = "panel_password_hash";
 export const API_PASSWORD_KEY = "api_password_hash";
 export const LOG_RETENTION_DAYS_KEY = "log_retention_days";
 export const LAST_ACCOUNT_POLL_AT_KEY = "last_account_poll_at";
+export const GUEST_SOURCE_STATE_KEY = "guest_source_state";
 
 export function loadConfig(env: CloudflareBindings): AppConfig {
   const ttlHours = parseInteger(env.ADMIN_SESSION_TTL_HOURS, 168);
@@ -34,6 +36,7 @@ export function loadConfig(env: CloudflareBindings): AppConfig {
     zaiBaseUrl: env.ZAI_BASE_URL ?? "https://chat.z.ai",
     zaiJwt: env.ZAI_JWT ?? null,
     zaiSessionToken: env.ZAI_SESSION_TOKEN ?? null,
+    guestEnabled: parseBoolean(env.ZAI_GUEST_ENABLED, false),
     setupToken: env.SETUP_TOKEN ?? null,
     defaultModel: env.DEFAULT_MODEL ?? "glm-5",
     requestTimeoutMs: parseInteger(env.REQUEST_TIMEOUT, 120) * 1000,

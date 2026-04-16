@@ -90,6 +90,26 @@ async function ensureOk(response: Response, method: string, path: string): Promi
   );
 }
 
+async function requestWithConfig(
+  config: AppConfig,
+  method: string,
+  path: string,
+  init: { headers?: Record<string, string>; body?: BodyInit | null },
+): Promise<Response> {
+  const headers = new Headers({
+    "User-Agent": USER_AGENT,
+    "X-FE-Version": FE_VERSION,
+    "Accept-Language": "en-US",
+    ...init.headers,
+  });
+  if (init.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const url = new URL(path, config.zaiBaseUrl);
+  const response = await fetchWithTimeout(new Request(url.toString(), { method, headers, body: init.body }), config.requestTimeoutMs);
+  return ensureOk(response, method, new URL(url.toString()).pathname);
+}
+
 async function* iterateLines(stream: ReadableStream<Uint8Array>): AsyncGenerator<string> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -129,6 +149,18 @@ export function describeHttpError(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+export async function requestGuestSession(config: AppConfig): Promise<SessionState> {
+  const response = await requestWithConfig(config, "GET", "/api/v1/auths/", {});
+  const payload = await response.json<Record<string, unknown>>();
+  return {
+    token: String(payload.token),
+    userId: String(payload.id),
+    name: String(payload.name ?? ""),
+    email: String(payload.email ?? ""),
+    role: String(payload.role ?? "user"),
+  };
 }
 
 export class ZAIClient {
@@ -415,18 +447,7 @@ export class ZAIClient {
   }
 
   private async request(method: string, path: string, init: { headers?: Record<string, string>; body?: BodyInit | null }): Promise<Response> {
-    const headers = new Headers({
-      "User-Agent": USER_AGENT,
-      "X-FE-Version": FE_VERSION,
-      "Accept-Language": "en-US",
-      ...init.headers,
-    });
-    if (init.body && !headers.has("Content-Type")) {
-      headers.set("Content-Type", "application/json");
-    }
-    const url = new URL(path, this.config.zaiBaseUrl);
-    const response = await fetchWithTimeout(new Request(url.toString(), { method, headers, body: init.body }), this.config.requestTimeoutMs);
-    return ensureOk(response, method, new URL(url.toString()).pathname);
+    return requestWithConfig(this.config, method, path, init);
   }
 
   private async signPrompt(input: { requestId: string; timestampMs: string; userId: string; prompt: string }): Promise<string> {

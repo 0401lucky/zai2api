@@ -1,6 +1,7 @@
 const state = {
   bootstrap: null,
   accounts: [],
+  guestSource: null,
   logs: [],
   security: null,
   currentView: "accounts",
@@ -53,11 +54,23 @@ function setView(view) {
 function renderHero() {
   const bootstrap = state.bootstrap || {};
   const accounts = bootstrap.accounts || {};
-  const summaryText = accounts.persisted_total
-    ? `健康 ${accounts.persisted_healthy ?? 0} / 启用 ${accounts.persisted_enabled ?? 0} / 总计 ${accounts.persisted_total ?? 0} 个持久化账号。`
-    : accounts.using_env_fallback
-      ? "当前没有持久化账号，正在使用环境变量兜底。"
-      : "当前尚未配置任何可用账号。";
+  const guest = bootstrap.guest_source || state.guestSource || {};
+  let summaryText = "当前尚未配置任何可用账号。";
+  if (accounts.persisted_healthy) {
+    summaryText = `健康 ${accounts.persisted_healthy ?? 0} / 启用 ${accounts.persisted_enabled ?? 0} / 总计 ${accounts.persisted_total ?? 0} 个持久化账号。`;
+  } else if (accounts.using_guest_source) {
+    summaryText = accounts.persisted_total
+      ? "当前没有健康持久化账号，正在使用游客来源。"
+      : "当前没有持久化账号，正在使用游客来源。";
+  } else if (accounts.using_env_fallback) {
+    summaryText = accounts.persisted_total
+      ? "当前没有健康持久化账号，正在使用环境变量兜底。"
+      : "当前没有持久化账号，正在使用环境变量兜底。";
+  } else if (guest.enabled && guest.status === "cooldown") {
+    summaryText = "游客来源冷却中，当前没有可用持久化账号。";
+  } else if (guest.enabled) {
+    summaryText = "游客来源已启用，当前等待可用会话。";
+  }
   document.getElementById("summary-text").textContent = summaryText;
   document.getElementById("hero-title").textContent = bootstrap.setup_required ? "后台尚未初始化" : "Cloudflare 后台已就绪";
   document.getElementById("hero-copy").textContent = summaryText;
@@ -66,6 +79,7 @@ function renderHero() {
 }
 
 function renderAccounts() {
+  renderGuestSource();
   const grid = document.getElementById("accounts-grid");
   if (!state.accounts.length) {
     grid.innerHTML = '<div class="account-card"><h4>暂无持久化账号</h4><p class="muted">可直接添加新的 JWT，也可以仅依赖环境变量兜底。</p></div>';
@@ -94,6 +108,33 @@ function renderAccounts() {
       </div>
     </article>
   `).join("");
+}
+
+function renderGuestSource() {
+  const host = document.getElementById("guest-source-slot");
+  const guest = state.guestSource || state.bootstrap?.guest_source;
+  if (!guest) {
+    host.innerHTML = "";
+    return;
+  }
+  const statusClass = guestStatusClass(guest);
+  const enabledText = guest.enabled ? "已启用" : "未启用";
+  const rotationText = guest.in_rotation ? "参与轮询" : "暂未参与轮询";
+  host.innerHTML = `
+    <article class="account-card">
+      <div class="badge ${statusClass}">${enabledText} · ${guestStatusLabel(guest.status)}</div>
+      <h4>游客来源</h4>
+      <div class="card-subtitle">独立于持久化账号池的游客 session 来源</div>
+      <div class="account-meta">
+        <div>轮询状态：${rotationText}</div>
+        <div>最近刷新：${formatTimestamp(guest.last_refreshed_at)}</div>
+        <div>最近用户：${escapeHtml(guest.last_user_id || "—")}</div>
+        <div>请求次数：${guest.request_count ?? 0}</div>
+        <div>冷却截止：${formatTimestamp(guest.cooldown_until)}</div>
+        <div>最近错误：${escapeHtml(guest.last_error || "无")}</div>
+      </div>
+    </article>
+  `;
 }
 
 function renderSecurity() {
@@ -129,6 +170,7 @@ function updateAuthPanels() {
 
 async function loadBootstrap() {
   state.bootstrap = await api("/api/admin/bootstrap", { headers: {} });
+  state.guestSource = state.bootstrap.guest_source || null;
   renderHero();
   updateAuthPanels();
   if (state.bootstrap.logged_in) {
@@ -139,6 +181,7 @@ async function loadBootstrap() {
 async function loadAccounts() {
   const payload = await api("/api/admin/accounts", { headers: {} });
   state.accounts = payload.accounts || [];
+  state.guestSource = payload.guest_source || state.guestSource;
   renderAccounts();
 }
 
@@ -165,6 +208,30 @@ function escapeHtml(value) {
 function formatTimestamp(value) {
   if (!value) return "—";
   return new Date(value * 1000).toLocaleString("zh-CN");
+}
+
+function guestStatusLabel(status) {
+  switch (status) {
+    case "active":
+      return "活跃";
+    case "cooldown":
+      return "冷却中";
+    case "error":
+      return "异常";
+    case "idle":
+      return "待命";
+    case "disabled":
+      return "已关闭";
+    default:
+      return String(status || "未知");
+  }
+}
+
+function guestStatusClass(guest) {
+  if (!guest.enabled) return "";
+  if (guest.status === "active") return "active";
+  if (guest.status === "cooldown" || guest.status === "error") return "error";
+  return "idle";
 }
 
 document.getElementById("setup-form").addEventListener("submit", async (event) => {
@@ -206,6 +273,7 @@ document.getElementById("login-form").addEventListener("submit", async (event) =
 document.getElementById("logout-button").addEventListener("click", async () => {
   await api("/api/admin/logout", { method: "POST", body: "{}" });
   state.accounts = [];
+  state.guestSource = null;
   state.logs = [];
   state.security = null;
   await loadBootstrap();
@@ -219,7 +287,6 @@ document.getElementById("account-form").addEventListener("submit", async (event)
     await api("/api/admin/accounts", { method: "POST", body: JSON.stringify(payload) });
     showToast("账号已保存");
     form.reset();
-    await loadAccounts();
     await loadBootstrap();
   } catch (error) {
     showToast(error.message);
@@ -263,8 +330,7 @@ document.getElementById("accounts-grid").addEventListener("click", async (event)
   try {
     await api(path, { method: "POST", body: "{}" });
     showToast("账号状态已更新");
-    await loadAccounts();
-    await loadLogs();
+    await loadBootstrap();
   } catch (error) {
     showToast(error.message);
   }

@@ -1,9 +1,11 @@
-import type { AccountRecord, SessionState, UpstreamChunk, UpstreamResult } from "./bindings";
+import type { AccountRecord, GuestSourceSnapshot, UpstreamChunk, UpstreamResult } from "./bindings";
 import type { AppConfig } from "./config";
+import { GuestSourceManager } from "./guest-source";
 import { D1Repository } from "./repository";
 import { ZAIClient, UpstreamHttpError, describeHttpError } from "./zai-client";
 
-interface RoutedAccount {
+interface RoutedSource {
+  sourceType: "account" | "guest" | "env";
   accountId: number | null;
   jwt: string | null;
   sessionToken: string | null;
@@ -19,6 +21,7 @@ export class AccountPool {
   constructor(
     private readonly config: AppConfig,
     private readonly repository: D1Repository,
+    private readonly guestSource: GuestSourceManager,
     private readonly clientFactory: ClientFactory = (jwt, sessionToken) => new ZAIClient(config, jwt, sessionToken),
   ) {}
 
@@ -57,6 +60,10 @@ export class AccountPool {
     return this.repository.getAccount(accountId);
   }
 
+  getGuestSourceSnapshot(): Promise<GuestSourceSnapshot> {
+    return this.guestSource.getSnapshot();
+  }
+
   async setAccountEnabled(accountId: number, enabled: boolean): Promise<AccountRecord> {
     const account = await this.repository.getAccount(accountId);
     if (!account) {
@@ -77,7 +84,8 @@ export class AccountPool {
     if (!account) {
       throw new Error(`账号 ${accountId} 不存在`);
     }
-    const routed: RoutedAccount = {
+    const routed: RoutedSource = {
+      sourceType: "account",
       accountId: account.id,
       jwt: account.jwt,
       sessionToken: account.sessionToken,
@@ -123,12 +131,21 @@ export class AccountPool {
     enableThinking: boolean;
     autoWebSearch: boolean;
   }): Promise<UpstreamResult> {
-    const candidates = await this.candidateAccounts();
+    const candidates = await this.candidateSources();
     if (!candidates.length) {
       throw new Error("当前没有可用的启用账号");
     }
     let lastError: unknown;
     for (const routed of candidates) {
+      if (routed.sourceType === "guest") {
+        try {
+          return await this.guestSource.collectPrompt(input);
+        } catch (error) {
+          lastError = error;
+          continue;
+        }
+      }
+
       const client = this.clientFactory(routed.jwt, routed.sessionToken);
       try {
         const result = await client.collectPrompt(input);
@@ -148,15 +165,23 @@ export class AccountPool {
     enableThinking: boolean;
     autoWebSearch: boolean;
   }): AsyncGenerator<UpstreamChunk> {
-    const candidates = await this.candidateAccounts();
+    const candidates = await this.candidateSources();
     if (!candidates.length) {
       throw new Error("当前没有可用的启用账号");
     }
     let lastError: unknown;
     for (const routed of candidates) {
-      const client = this.clientFactory(routed.jwt, routed.sessionToken);
       let started = false;
       try {
+        if (routed.sourceType === "guest") {
+          for await (const chunk of this.guestSource.streamPrompt(input)) {
+            started = true;
+            yield chunk;
+          }
+          return;
+        }
+
+        const client = this.clientFactory(routed.jwt, routed.sessionToken);
         for await (const chunk of client.streamPrompt(input)) {
           started = true;
           yield chunk;
@@ -165,7 +190,9 @@ export class AccountPool {
         return;
       } catch (error) {
         lastError = error;
-        await this.handleFailure(routed, error);
+        if (routed.sourceType !== "guest") {
+          await this.handleFailure(routed, error);
+        }
         if (started) {
           throw error;
         }
@@ -174,8 +201,9 @@ export class AccountPool {
     throw lastError ?? new Error("当前没有可用的启用账号");
   }
 
-  private async candidateAccounts(): Promise<RoutedAccount[]> {
-    const persisted = (await this.repository.listAccounts({ enabledOnly: true, healthyOnly: true })).map((account) => ({
+  private async candidateSources(): Promise<RoutedSource[]> {
+    const persisted = (await this.repository.listAccounts({ enabledOnly: true, healthyOnly: true })).map<RoutedSource>((account) => ({
+      sourceType: "account",
       accountId: account.id,
       jwt: account.jwt,
       sessionToken: account.sessionToken,
@@ -183,9 +211,24 @@ export class AccountPool {
       persistent: true,
     }));
 
+    const guestSnapshot = await this.guestSource.getSnapshot();
+    const guestCandidate: RoutedSource[] = guestSnapshot.inRotation
+      ? [
+          {
+            sourceType: "guest",
+            accountId: null,
+            jwt: null,
+            sessionToken: null,
+            label: "guest-source",
+            persistent: false,
+          },
+        ]
+      : [];
+
     const cooldown =
       this.config.accountCooldownSeconds > 0
-        ? (await this.repository.listCooldownAccounts(this.config.accountCooldownSeconds)).map((account) => ({
+        ? (await this.repository.listCooldownAccounts(this.config.accountCooldownSeconds)).map<RoutedSource>((account) => ({
+            sourceType: "account",
             accountId: account.id,
             jwt: account.jwt,
             sessionToken: account.sessionToken,
@@ -198,6 +241,7 @@ export class AccountPool {
       this.config.zaiJwt || this.config.zaiSessionToken
         ? [
             {
+              sourceType: "env" as const,
               accountId: null,
               jwt: this.config.zaiJwt,
               sessionToken: this.config.zaiSessionToken,
@@ -207,20 +251,21 @@ export class AccountPool {
           ]
         : [];
 
-    if (persisted.length || cooldown.length) {
-      const start = persisted.length ? accountCursor % persisted.length : 0;
-      if (persisted.length) {
-        accountCursor = (start + 1) % persisted.length;
-      }
-      return [...persisted.slice(start), ...persisted.slice(0, start), ...cooldown, ...envFallback];
+    const rotating = [...persisted, ...guestCandidate];
+    if (rotating.length) {
+      const start = accountCursor % rotating.length;
+      accountCursor = (start + 1) % rotating.length;
+      return [...rotating.slice(start), ...rotating.slice(0, start), ...cooldown, ...envFallback];
     }
-    if (envFallback.length) {
-      return envFallback;
+
+    if (cooldown.length) {
+      return [...cooldown, ...envFallback];
     }
-    return [];
+
+    return envFallback;
   }
 
-  private async markSuccess(routed: RoutedAccount, client: ZAIClient): Promise<void> {
+  private async markSuccess(routed: RoutedSource, client: ZAIClient): Promise<void> {
     if (!routed.persistent || routed.accountId === null) {
       return;
     }
@@ -233,7 +278,7 @@ export class AccountPool {
     });
   }
 
-  private async handleFailure(routed: RoutedAccount, error: unknown): Promise<void> {
+  private async handleFailure(routed: RoutedSource, error: unknown): Promise<void> {
     const disable = this.shouldDisable(error);
     const errorText = describeHttpError(error);
     let escalated = false;

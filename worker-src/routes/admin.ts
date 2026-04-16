@@ -13,6 +13,7 @@ import {
   requestFailureDetail,
   requestFailureStatusCode,
   serializeAccount,
+  serializeGuestSource,
   serializeLog,
   serializeSecuritySettings,
 } from "../helpers";
@@ -40,6 +41,7 @@ export function createAdminRoutes(): Hono<AppEnv> {
         overridden_by_env: apiSource === "env",
       },
       accounts: await accountSummary(services),
+      guest_source: serializeGuestSource(await services.guestSource.getSnapshot()),
       frontend_ready: false,
       setup_required: panelSource === "disabled",
     });
@@ -154,7 +156,10 @@ export function createAdminRoutes(): Hono<AppEnv> {
   app.get("/accounts", async (c) => {
     const services = c.get("services");
     await requireAdminSession(c.req.raw, services);
-    return c.json({ accounts: (await services.accountPool.listAccounts()).map(serializeAccount) });
+    return c.json({
+      accounts: (await services.accountPool.listAccounts()).map(serializeAccount),
+      guest_source: serializeGuestSource(await services.accountPool.getGuestSourceSnapshot()),
+    });
   });
 
   app.post("/accounts", async (c) => {

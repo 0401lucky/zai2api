@@ -250,6 +250,10 @@ input {
   gap: 16px;
 }
 
+.guest-source-slot {
+  margin-bottom: 18px;
+}
+
 .account-card,
 .log-card {
   border-radius: 20px;
@@ -300,6 +304,11 @@ input {
 .badge.active {
   color: var(--success);
   background: rgba(28, 122, 56, 0.12);
+}
+
+.badge.idle {
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .log-list {
