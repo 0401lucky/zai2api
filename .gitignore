@@ -31,8 +31,18 @@ node_modules/
 .wrangler/
 .dev.vars
 .dev.vars.*
+.claude/
+.playwright-mcp/
+tmp/
+data/*.db
+data/*.sqlite
+data/*.sqlite3
 
 # IDE / OS files
 .DS_Store
 .idea/
 .vscode/
+
+# Frontend build output (served by wrangler Assets)
+public/
+
