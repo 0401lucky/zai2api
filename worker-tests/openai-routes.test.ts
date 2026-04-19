@@ -101,6 +101,30 @@ describe("openai routes", () => {
     });
   });
 
+  it("兼容忽略 chat completions 中常见但未实现的 OpenAI 参数", async () => {
+    const { services } = makeServices({});
+    const app = makeApp(services);
+
+    const response = await app.request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "glm-5",
+        messages: [{ role: "user", content: "hello" }],
+        temperature: 0.7,
+        top_p: 0.9,
+        tools: [{ type: "function", function: { name: "demo", parameters: {} } }],
+        tool_choice: "auto",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      object: "chat.completion",
+      model: "glm-5",
+    });
+  });
+
   it("兼容接受 responses 的 max_output_tokens 参数", async () => {
     const { services } = makeServices({});
     const app = makeApp(services);
@@ -123,24 +147,28 @@ describe("openai routes", () => {
     });
   });
 
-  it("显式拒绝当前未支持的 OpenAI 参数", async () => {
+  it("兼容忽略 responses 中常见但未实现的 OpenAI 参数", async () => {
     const { services } = makeServices({});
     const app = makeApp(services);
 
-    const response = await app.request("http://localhost/v1/chat/completions", {
+    const response = await app.request("http://localhost/v1/responses", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         model: "glm-5",
-        messages: [{ role: "user", content: "hello" }],
+        input: "hello",
         temperature: 0.7,
+        top_p: 0.9,
         tools: [{ type: "function", function: { name: "demo", parameters: {} } }],
+        tool_choice: "auto",
       }),
     });
 
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      detail: "当前代理暂不支持这些参数：temperature, tools",
+      object: "response",
+      model: "glm-5",
+      status: "completed",
     });
   });
 

@@ -138,5 +138,6 @@ curl https://your-worker.example.com/v1/responses \
 - Cloudflare 版为当前主线，后续新增功能默认在 `worker-src/` 和 `public/` 中演进
 - 当前仅稳定支持 `model`、`messages` / `input`、`stream`
 - `max_tokens`、`max_completion_tokens`、`max_output_tokens` 会为兼容常见 OpenAI 客户端而放行，但当前不会严格控制上游输出长度
-- 若传入 `tools`、`tool_choice`、`response_format`、`temperature` 等当前未实现参数，会直接返回 `400`，避免“看起来成功但其实未生效”
+- `temperature`、`top_p`、`tools`、`tool_choice`、`response_format` 等常见 OpenAI 参数会做兼容忽略，不再直接返回 `400`
+- 其中 `tools` / `tool_choice` 当前仅做兼容透传前忽略，不会真正执行函数调用或工具编排
 - 后台写接口仅接受 `application/json`，并要求同源请求或显式管理请求头，避免 CSRF

@@ -22,7 +22,7 @@ import { normalizeUsage, nowSeconds } from "../utils";
 
 const DONE_EVENT = new TextEncoder().encode("data: [DONE]\n\n");
 const HEARTBEAT_EVENT = new TextEncoder().encode(": keepalive\n\n");
-const UNSUPPORTED_CHAT_PARAMETERS = [
+const IGNORED_CHAT_PARAMETERS = [
   "temperature",
   "top_p",
   "stop",
@@ -36,7 +36,7 @@ const UNSUPPORTED_CHAT_PARAMETERS = [
   "frequency_penalty",
 ];
 
-const UNSUPPORTED_RESPONSES_PARAMETERS = [
+const IGNORED_RESPONSES_PARAMETERS = [
   "temperature",
   "top_p",
   "tools",
@@ -77,7 +77,7 @@ export function createOpenAIRoutes(): Hono<AppEnv> {
     await enforceApiPassword(c.req.raw, services);
     const startedAt = Date.now();
     const payload = await readJsonBody(c.req.raw);
-    assertUnsupportedParameters(payload, UNSUPPORTED_CHAT_PARAMETERS);
+    const ignoredParameters = collectProvidedParameters(payload, IGNORED_CHAT_PARAMETERS);
     const requestedModel = normalizePublicModelName(String(payload.model ?? services.config.defaultModel));
     const { upstreamModel, enableThinking } = resolveModelRequest(requestedModel);
     const prompt = assemblePrompt(Array.isArray(payload.messages) ? (payload.messages as Record<string, unknown>[]) : []);
@@ -103,6 +103,7 @@ export function createOpenAIRoutes(): Hono<AppEnv> {
           model: requestedModel,
           stream: false,
           enable_thinking: enableThinking,
+          ignored_parameters: ignoredParameters,
           prompt_chars: prompt.length,
           answer_chars: upstreamResult.answerText.length,
           reasoning_chars: upstreamResult.reasoningText.length,
@@ -139,6 +140,7 @@ export function createOpenAIRoutes(): Hono<AppEnv> {
           model: requestedModel,
           stream: false,
           enable_thinking: enableThinking,
+          ignored_parameters: ignoredParameters,
           error: detail,
           duration_ms: Date.now() - startedAt,
         },
@@ -152,7 +154,7 @@ export function createOpenAIRoutes(): Hono<AppEnv> {
     await enforceApiPassword(c.req.raw, services);
     const startedAt = Date.now();
     const payload = await readJsonBody(c.req.raw);
-    assertUnsupportedParameters(payload, UNSUPPORTED_RESPONSES_PARAMETERS);
+    const ignoredParameters = collectProvidedParameters(payload, IGNORED_RESPONSES_PARAMETERS);
     const requestedModel = normalizePublicModelName(String(payload.model ?? services.config.defaultModel));
     const { upstreamModel, enableThinking } = resolveModelRequest(requestedModel);
     const prompt = assembleResponsesPrompt(payload);
@@ -178,6 +180,7 @@ export function createOpenAIRoutes(): Hono<AppEnv> {
           model: requestedModel,
           stream: false,
           enable_thinking: enableThinking,
+          ignored_parameters: ignoredParameters,
           prompt_chars: prompt.length,
           answer_chars: upstreamResult.answerText.length,
           reasoning_chars: upstreamResult.reasoningText.length,
@@ -208,6 +211,7 @@ export function createOpenAIRoutes(): Hono<AppEnv> {
           model: requestedModel,
           stream: false,
           enable_thinking: enableThinking,
+          ignored_parameters: ignoredParameters,
           error: detail,
           duration_ms: Date.now() - startedAt,
         },
@@ -570,10 +574,6 @@ async function readJsonBody(request: Request): Promise<Record<string, unknown>> 
   }
 }
 
-function assertUnsupportedParameters(payload: Record<string, unknown>, keys: string[]): void {
-  const provided = keys.filter((key) => Object.prototype.hasOwnProperty.call(payload, key) && payload[key] !== null);
-  if (!provided.length) {
-    return;
-  }
-  throw new HTTPException(400, { message: `当前代理暂不支持这些参数：${provided.join(", ")}` });
+function collectProvidedParameters(payload: Record<string, unknown>, keys: string[]): string[] {
+  return keys.filter((key) => Object.prototype.hasOwnProperty.call(payload, key) && payload[key] !== null);
 }
