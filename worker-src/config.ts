@@ -16,6 +16,9 @@ export interface AppConfig {
   adminCookieName: string;
   adminSessionTtlSeconds: number;
   adminCookieSecure: boolean;
+  adminAuthMaxAttempts: number;
+  adminAuthWindowSeconds: number;
+  adminAuthLockSeconds: number;
   accountPollIntervalSeconds: number;
   accountErrorThreshold: number;
   accountCooldownSeconds: number;
@@ -49,6 +52,9 @@ export function loadConfig(env: CloudflareBindings): AppConfig {
     adminCookieName: env.ADMIN_COOKIE_NAME ?? DEFAULT_ADMIN_COOKIE_NAME,
     adminSessionTtlSeconds: ttlHours * 3600,
     adminCookieSecure: parseBoolean(env.ADMIN_COOKIE_SECURE, true),
+    adminAuthMaxAttempts: Math.max(1, parseInteger(env.ADMIN_AUTH_MAX_ATTEMPTS, 5)),
+    adminAuthWindowSeconds: Math.max(60, parseInteger(env.ADMIN_AUTH_WINDOW_SECONDS, 900)),
+    adminAuthLockSeconds: Math.max(60, parseInteger(env.ADMIN_AUTH_LOCK_SECONDS, 900)),
     accountPollIntervalSeconds: parseInteger(env.ACCOUNT_POLL_INTERVAL_SECONDS, 300),
     accountErrorThreshold: parseInteger(env.ACCOUNT_ERROR_THRESHOLD, 3),
     accountCooldownSeconds: parseInteger(env.ACCOUNT_COOLDOWN_SECONDS, 60),

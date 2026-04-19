@@ -23,4 +23,15 @@ describe("config", () => {
     expect(config.guestEnabled).toBe(true);
     expect(config.guestEnabledEnv).toBe(true);
   });
+
+  it("使用后台认证限流默认值", () => {
+    const config = loadConfig({
+      DB: {} as D1Database,
+      ASSETS: { fetch: async () => new Response("ok") },
+      ACCOUNT_ENCRYPTION_KEY: "secret",
+    });
+    expect(config.adminAuthMaxAttempts).toBe(5);
+    expect(config.adminAuthWindowSeconds).toBe(900);
+    expect(config.adminAuthLockSeconds).toBe(900);
+  });
 });

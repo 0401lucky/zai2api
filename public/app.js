@@ -21,10 +21,12 @@ function showToast(message, duration = 3200) {
 }
 
 async function api(path, options = {}) {
+  const isAdminApi = path.startsWith("/api/admin");
   const response = await fetch(path, {
     credentials: "include",
     headers: {
       "content-type": "application/json",
+      ...(isAdminApi ? { "x-zai2api-admin-request": "same-origin" } : {}),
       ...(options.headers || {}),
     },
     ...options,

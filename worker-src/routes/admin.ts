@@ -3,6 +3,7 @@ import { HTTPException } from "hono/http-exception";
 
 import type { AppEnv } from "../app-env";
 import { LOG_RETENTION_DAYS_KEY } from "../config";
+import { timingSafeEqualString } from "../crypto";
 import {
   accountSummary,
   buildSessionCookie,
@@ -19,8 +20,19 @@ import {
 } from "../helpers";
 import type { AppServices } from "../services";
 
+type AdminAuthAction = "login" | "setup";
+const ADMIN_REQUEST_HEADER = "x-zai2api-admin-request";
+const ADMIN_REQUEST_HEADER_VALUE = "same-origin";
+
 export function createAdminRoutes(): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
+
+  app.use("*", async (c, next) => {
+    if (c.req.method === "POST") {
+      ensureTrustedAdminMutation(c.req.raw);
+    }
+    await next();
+  });
 
   app.get("/bootstrap", async (c) => {
     const services = c.get("services");
@@ -56,14 +68,22 @@ export function createAdminRoutes(): Hono<AppEnv> {
       throw new HTTPException(503, { message: "缺少 SETUP_TOKEN，禁止匿名初始化" });
     }
     const authorization = c.req.raw.headers.get("authorization");
-    const providedToken =
-      authorization && authorization.toLowerCase().startsWith("bearer ")
-        ? authorization.slice("bearer ".length).trim()
-        : String(c.req.query("token") ?? "");
-    if (providedToken !== services.config.setupToken) {
-      throw new HTTPException(401, { message: "初始化令牌无效" });
+    const providedToken = authorization && authorization.toLowerCase().startsWith("bearer ")
+      ? authorization.slice("bearer ".length).trim()
+      : "";
+    const actorKey = getAdminActorKey(c.req.raw);
+    await ensureAdminActionAllowed(services, "setup", actorKey);
+    if (!timingSafeEqualString(providedToken, services.config.setupToken)) {
+      await rejectAdminAction(
+        services,
+        "setup",
+        actorKey,
+        "后台初始化令牌校验失败",
+        "初始化令牌无效",
+        { path: c.req.path },
+      );
     }
-    const payload = (await c.req.json()) as Record<string, unknown>;
+    const payload = await readJsonBody(c.req.raw);
     const panelPassword = String(payload.panel_password ?? "").trim();
     if (!panelPassword) {
       throw new HTTPException(400, { message: "缺少 panel_password" });
@@ -88,6 +108,7 @@ export function createAdminRoutes(): Hono<AppEnv> {
       category: "settings",
       message: "已初始化安全设置",
     });
+    await services.auth.clearAdminFailures("setup", actorKey);
     const { sessionId, expiresAt } = await services.auth.createAdminSession();
     const response = c.json({
       ok: true,
@@ -103,16 +124,14 @@ export function createAdminRoutes(): Hono<AppEnv> {
     if ((await services.auth.panelPasswordSource()) === "disabled") {
       throw new HTTPException(503, { message: "请先初始化后台密码" });
     }
-    const payload = (await c.req.json()) as Record<string, unknown>;
+    const actorKey = getAdminActorKey(c.req.raw);
+    await ensureAdminActionAllowed(services, "login", actorKey);
+    const payload = await readJsonBody(c.req.raw);
     const password = String(payload.password ?? "");
     if (!(await services.auth.verifyPanelPassword(password))) {
-      await services.repository.addLog({
-        level: "warning",
-        category: "admin_auth",
-        message: "面板登录失败",
-      });
-      throw new HTTPException(401, { message: "密码错误" });
+      await rejectAdminAction(services, "login", actorKey, "面板登录失败", "密码错误");
     }
+    await services.auth.clearAdminFailures("login", actorKey);
     const { sessionId, expiresAt } = await services.auth.createAdminSession();
     await services.repository.addLog({
       level: "info",
@@ -165,7 +184,7 @@ export function createAdminRoutes(): Hono<AppEnv> {
   app.post("/accounts", async (c) => {
     const services = c.get("services");
     await requireAdminSession(c.req.raw, services);
-    const payload = (await c.req.json()) as Record<string, unknown>;
+    const payload = await readJsonBody(c.req.raw);
     const jwt = String(payload.jwt ?? "").trim();
     if (!jwt) {
       throw new HTTPException(400, { message: "缺少 JWT" });
@@ -212,7 +231,7 @@ export function createAdminRoutes(): Hono<AppEnv> {
   app.post("/settings/security", async (c) => {
     const services = c.get("services");
     await requireAdminSession(c.req.raw, services);
-    const payload = (await c.req.json()) as Record<string, unknown>;
+    const payload = await readJsonBody(c.req.raw);
     const changed: string[] = [];
 
     const panelPassword = String(payload.panel_password ?? "").trim();
@@ -293,4 +312,62 @@ async function requireAdminSession(request: Request, services: AppServices): Pro
     return;
   }
   throw new HTTPException(401, { message: "需要先完成面板登录" });
+}
+
+async function readJsonBody(request: Request): Promise<Record<string, unknown>> {
+  try {
+    return (await request.json()) as Record<string, unknown>;
+  } catch {
+    throw new HTTPException(400, { message: "请求体必须是有效 JSON" });
+  }
+}
+
+function ensureTrustedAdminMutation(request: Request): void {
+  const contentType = request.headers.get("content-type")?.toLowerCase() ?? "";
+  if (!contentType.includes("application/json")) {
+    throw new HTTPException(415, { message: "后台写操作仅接受 application/json 请求" });
+  }
+  const requestOrigin = new URL(request.url).origin;
+  const originHeader = request.headers.get("origin");
+  if (originHeader && originHeader === requestOrigin) {
+    return;
+  }
+  if (request.headers.get(ADMIN_REQUEST_HEADER) === ADMIN_REQUEST_HEADER_VALUE) {
+    return;
+  }
+  throw new HTTPException(403, { message: "非法来源，已拒绝后台写操作" });
+}
+
+function getAdminActorKey(request: Request): string {
+  const forwarded = request.headers.get("cf-connecting-ip") ?? request.headers.get("x-forwarded-for")?.split(",", 1)[0] ?? "unknown";
+  return forwarded.trim().replace(/[^0-9a-zA-Z:._-]/g, "_") || "unknown";
+}
+
+async function ensureAdminActionAllowed(services: AppServices, action: AdminAuthAction, actorKey: string): Promise<void> {
+  const state = await services.auth.getAdminRateLimit(action, actorKey);
+  if (!state.locked) {
+    return;
+  }
+  throw new HTTPException(429, { message: `尝试次数过多，请在 ${state.retryAfterSeconds} 秒后重试` });
+}
+
+async function rejectAdminAction(
+  services: AppServices,
+  action: AdminAuthAction,
+  actorKey: string,
+  message: string,
+  clientMessage: string,
+  details?: Record<string, unknown>,
+): Promise<never> {
+  const state = await services.auth.recordAdminFailure(action, actorKey);
+  await services.repository.addLog({
+    level: "warning",
+    category: "admin_auth",
+    message,
+    details: { actor: actorKey, failed_count: state.failedCount, locked: state.locked, ...details },
+  });
+  if (state.locked) {
+    throw new HTTPException(429, { message: `尝试次数过多，请在 ${state.retryAfterSeconds} 秒后重试` });
+  }
+  throw new HTTPException(401, { message: clientMessage });
 }

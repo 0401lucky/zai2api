@@ -35,6 +35,70 @@ interface SessionRow {
   expires_at: number;
 }
 
+interface ExistingAccountCandidateRow {
+  id: number;
+  user_id: string | null;
+  email: string | null;
+}
+
+interface AccountSummaryRow {
+  total: number | null;
+  enabled_total: number | null;
+  healthy_total: number | null;
+}
+
+const LOG_STRING_MAX_LENGTH = 2_000;
+const LOG_REDACTED = "[已脱敏]";
+const SENSITIVE_DETAIL_KEY_PATTERN = /(jwt|token|secret|password|cookie|authorization|api[_-]?key|session([_-]?id|[_-]?token)?)/i;
+
+export function sanitizeLogDetails(details: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
+  if (!details) {
+    return null;
+  }
+  return sanitizeLogObject(details, 0);
+}
+
+export interface AccountSummaryCounts {
+  persistedTotal: number;
+  persistedEnabled: number;
+  persistedHealthy: number;
+}
+
+export function pickExistingAccountCandidate(
+  rows: ExistingAccountCandidateRow[],
+  userId: string | null,
+  email: string | null,
+): { id: number } | null {
+  const normalizedUserId = normalizeIdentifier(userId);
+  const normalizedEmail = normalizeIdentifier(email);
+  const hasStableUserId = Boolean(normalizedUserId && normalizedUserId !== "unknown");
+
+  if (hasStableUserId) {
+    const exactUserMatches = rows.filter((row) => normalizeIdentifier(row.user_id) === normalizedUserId);
+    if (exactUserMatches.length) {
+      if (normalizedEmail) {
+        const exactUserAndEmail = exactUserMatches.find((row) => normalizeIdentifier(row.email) === normalizedEmail);
+        if (exactUserAndEmail) {
+          return { id: Number(exactUserAndEmail.id) };
+        }
+      }
+      return { id: Number(exactUserMatches[0].id) };
+    }
+  }
+
+  if (normalizedEmail) {
+    const provisionalEmailMatch = rows.find((row) => {
+      const rowUserId = normalizeIdentifier(row.user_id);
+      return normalizeIdentifier(row.email) === normalizedEmail && (!rowUserId || rowUserId === "unknown");
+    });
+    if (provisionalEmailMatch) {
+      return { id: Number(provisionalEmailMatch.id) };
+    }
+  }
+
+  return null;
+}
+
 export class D1Repository {
   constructor(
     private readonly db: D1Database,
@@ -45,6 +109,19 @@ export class D1Repository {
   async getSetting(key: string): Promise<string | null> {
     const row = await this.db.prepare("SELECT value FROM settings WHERE key = ?").bind(key).first<{ value: string }>();
     return row?.value ?? null;
+  }
+
+  async getSettings(keys: string[]): Promise<Record<string, string>> {
+    if (!keys.length) {
+      return {};
+    }
+    const placeholders = keys.map(() => "?").join(", ");
+    const result = await this.db
+      .prepare(`SELECT key, value FROM settings WHERE key IN (${placeholders})`)
+      .bind(...keys)
+      .all<{ key: string; value: string }>();
+    const rows = result.results ?? [];
+    return Object.fromEntries(rows.map((row) => [row.key, row.value]));
   }
 
   async setSetting(key: string, value: string): Promise<void> {
@@ -183,6 +260,31 @@ export class D1Repository {
     return Number(row?.total ?? 0);
   }
 
+  async getAccountSummaryCounts(): Promise<AccountSummaryCounts> {
+    const row = await this.db
+      .prepare(
+        `SELECT
+           COUNT(*) AS total,
+           SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END) AS enabled_total,
+           SUM(
+             CASE
+               WHEN enabled = 1
+                AND status IN ('active', 'unknown')
+                AND (session_token IS NOT NULL OR jwt IS NOT NULL)
+               THEN 1
+               ELSE 0
+             END
+           ) AS healthy_total
+         FROM accounts`,
+      )
+      .first<AccountSummaryRow>();
+    return {
+      persistedTotal: Number(row?.total ?? 0),
+      persistedEnabled: Number(row?.enabled_total ?? 0),
+      persistedHealthy: Number(row?.healthy_total ?? 0),
+    };
+  }
+
   async getAccount(accountId: number): Promise<AccountRecord | null> {
     const row = await this.db.prepare("SELECT * FROM accounts WHERE id = ?").bind(accountId).first<AccountRow>();
     return row ? this.rowToAccount(row) : null;
@@ -284,9 +386,10 @@ export class D1Repository {
     message: string;
     details?: Record<string, unknown> | null;
   }): Promise<void> {
+    const sanitizedDetails = sanitizeLogDetails(input.details);
     await this.db
       .prepare("INSERT INTO logs(created_at, level, category, message, details) VALUES (?, ?, ?, ?, ?)")
-      .bind(nowSeconds(), input.level, input.category, input.message, input.details ? JSON.stringify(input.details) : null)
+      .bind(nowSeconds(), input.level, input.category, input.message, sanitizedDetails ? JSON.stringify(sanitizedDetails) : null)
       .run();
   }
 
@@ -325,19 +428,24 @@ export class D1Repository {
   }
 
   private async findExistingAccountRow(userId: string | null, email: string | null): Promise<{ id: number } | null> {
+    const clauses: string[] = [];
+    const params: string[] = [];
     if (userId) {
-      const row = await this.db.prepare("SELECT id FROM accounts WHERE user_id = ?").bind(userId).first<{ id: number }>();
-      if (row) {
-        return { id: Number(row.id) };
-      }
+      clauses.push("user_id = ?");
+      params.push(userId);
     }
     if (email) {
-      const row = await this.db.prepare("SELECT id FROM accounts WHERE email = ?").bind(email).first<{ id: number }>();
-      if (row) {
-        return { id: Number(row.id) };
-      }
+      clauses.push("email = ?");
+      params.push(email);
     }
-    return null;
+    if (!clauses.length) {
+      return null;
+    }
+    const result = await this.db
+      .prepare(`SELECT id, user_id, email FROM accounts WHERE ${clauses.join(" OR ")} ORDER BY id ASC`)
+      .bind(...params)
+      .all<ExistingAccountCandidateRow>();
+    return pickExistingAccountCandidate(result.results ?? [], userId, email);
   }
 
   private async rowToAccount(row: AccountRow): Promise<AccountRecord> {
@@ -358,4 +466,59 @@ export class D1Repository {
       updatedAt: Number(row.updated_at),
     };
   }
+}
+
+function normalizeIdentifier(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
+}
+
+function sanitizeLogObject(input: Record<string, unknown>, depth: number): Record<string, unknown> {
+  if (depth >= 6) {
+    return { truncated: true };
+  }
+  const output: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) {
+    output[key] = sanitizeLogValue(key, value, depth + 1);
+  }
+  return output;
+}
+
+function sanitizeLogValue(key: string, value: unknown, depth: number): unknown {
+  if (value === null || value === undefined) {
+    return value ?? null;
+  }
+  if (SENSITIVE_DETAIL_KEY_PATTERN.test(key)) {
+    return LOG_REDACTED;
+  }
+  if (typeof value === "string") {
+    return sanitizeLogString(value);
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    if (depth >= 6) {
+      return [LOG_REDACTED];
+    }
+    return value.map((item) => sanitizeLogValue(key, item, depth + 1));
+  }
+  if (typeof value === "object") {
+    return sanitizeLogObject(value as Record<string, unknown>, depth + 1);
+  }
+  return String(value);
+}
+
+function sanitizeLogString(value: string): string {
+  const cleaned = value
+    .replace(
+      /((?:jwt|token|secret|password|cookie|authorization|api[_-]?key|session(?:[_-]?id|[_-]?token)?)\s*[=:]\s*)(?:Bearer\s+)?[^\s",;]+/gi,
+      `$1${LOG_REDACTED}`,
+    )
+    .replace(/Bearer\s+[^\s",;]+/gi, "Bearer [已脱敏]")
+    .replace(/(enc:v\d:)[^\s",;]+/gi, "$1[已脱敏]");
+  if (cleaned.length <= LOG_STRING_MAX_LENGTH) {
+    return cleaned;
+  }
+  return `${cleaned.slice(0, LOG_STRING_MAX_LENGTH)}...[已截断]`;
 }

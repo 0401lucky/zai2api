@@ -10,6 +10,7 @@ import {
   makeResponseId,
   normalizePublicModelName,
   requestFailureDetail,
+  requestFailurePublicMessage,
   requestFailureStatusCode,
   resolveModelRequest,
   responseStreamFailedEvent,
@@ -18,6 +19,37 @@ import {
 import { assemblePrompt, assembleResponsesPrompt, buildResponsesOutput } from "../prompt-assembly";
 import type { AppServices } from "../services";
 import { normalizeUsage, nowSeconds } from "../utils";
+
+const DONE_EVENT = new TextEncoder().encode("data: [DONE]\n\n");
+const HEARTBEAT_EVENT = new TextEncoder().encode(": keepalive\n\n");
+const UNSUPPORTED_CHAT_PARAMETERS = [
+  "temperature",
+  "top_p",
+  "max_tokens",
+  "max_completion_tokens",
+  "stop",
+  "tools",
+  "tool_choice",
+  "response_format",
+  "n",
+  "user",
+  "seed",
+  "presence_penalty",
+  "frequency_penalty",
+];
+
+const UNSUPPORTED_RESPONSES_PARAMETERS = [
+  "temperature",
+  "top_p",
+  "max_output_tokens",
+  "tools",
+  "tool_choice",
+  "response_format",
+  "parallel_tool_calls",
+  "truncation",
+  "user",
+  "metadata",
+];
 
 export function createOpenAIRoutes(): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
@@ -47,7 +79,8 @@ export function createOpenAIRoutes(): Hono<AppEnv> {
     const services = c.get("services");
     await enforceApiPassword(c.req.raw, services);
     const startedAt = Date.now();
-    const payload = (await c.req.json()) as Record<string, unknown>;
+    const payload = await readJsonBody(c.req.raw);
+    assertUnsupportedParameters(payload, UNSUPPORTED_CHAT_PARAMETERS);
     const requestedModel = normalizePublicModelName(String(payload.model ?? services.config.defaultModel));
     const { upstreamModel, enableThinking } = resolveModelRequest(requestedModel);
     const prompt = assemblePrompt(Array.isArray(payload.messages) ? (payload.messages as Record<string, unknown>[]) : []);
@@ -113,7 +146,7 @@ export function createOpenAIRoutes(): Hono<AppEnv> {
           duration_ms: Date.now() - startedAt,
         },
       });
-      throw new HTTPException(requestFailureStatusCode(error) as 502 | 503, { message: detail });
+      throw new HTTPException(requestFailureStatusCode(error) as 502 | 503, { message: requestFailurePublicMessage() });
     }
   });
 
@@ -121,7 +154,8 @@ export function createOpenAIRoutes(): Hono<AppEnv> {
     const services = c.get("services");
     await enforceApiPassword(c.req.raw, services);
     const startedAt = Date.now();
-    const payload = (await c.req.json()) as Record<string, unknown>;
+    const payload = await readJsonBody(c.req.raw);
+    assertUnsupportedParameters(payload, UNSUPPORTED_RESPONSES_PARAMETERS);
     const requestedModel = normalizePublicModelName(String(payload.model ?? services.config.defaultModel));
     const { upstreamModel, enableThinking } = resolveModelRequest(requestedModel);
     const prompt = assembleResponsesPrompt(payload);
@@ -181,7 +215,7 @@ export function createOpenAIRoutes(): Hono<AppEnv> {
           duration_ms: Date.now() - startedAt,
         },
       });
-      throw new HTTPException(requestFailureStatusCode(error) as 502 | 503, { message: detail });
+      throw new HTTPException(requestFailureStatusCode(error) as 502 | 503, { message: requestFailurePublicMessage() });
     }
   });
 
@@ -222,6 +256,7 @@ function streamChatCompletions(
         let answerChars = 0;
         let reasoningChars = 0;
         let firstChunkAt: number | null = null;
+        const heartbeat = setInterval(() => controller.enqueue(HEARTBEAT_EVENT), 10_000);
 
         controller.enqueue(
           sseJson({
@@ -255,8 +290,9 @@ function streamChatCompletions(
                   error: chunk.error,
                 },
               });
-              controller.enqueue(chatStreamErrorEvent({ completionId, created, model, message: chunk.error }));
-              controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+              controller.enqueue(chatStreamErrorEvent({ completionId, created, model, message: requestFailurePublicMessage() }));
+              clearInterval(heartbeat);
+              controller.enqueue(DONE_EVENT);
               controller.close();
               return;
             }
@@ -302,8 +338,9 @@ function streamChatCompletions(
               duration_ms: Date.now() - startedAt,
             },
           });
-          controller.enqueue(chatStreamErrorEvent({ completionId, created, model, message: detail }));
-          controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+          controller.enqueue(chatStreamErrorEvent({ completionId, created, model, message: requestFailurePublicMessage() }));
+          clearInterval(heartbeat);
+          controller.enqueue(DONE_EVENT);
           controller.close();
           return;
         }
@@ -335,7 +372,8 @@ function streamChatCompletions(
             usage: finalUsage,
           }),
         );
-        controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+        clearInterval(heartbeat);
+        controller.enqueue(DONE_EVENT);
         controller.close();
       },
     }),
@@ -370,6 +408,7 @@ function streamResponses(
         let firstChunkAt = null;
         const reasoningParts: string[] = [];
         const answerParts: string[] = [];
+        const heartbeat = setInterval(() => controller.enqueue(HEARTBEAT_EVENT), 10_000);
 
         controller.enqueue(sseJson({ type: "response.created", response: { id: responseId, object: "response", created, model, status: "in_progress" } }));
         controller.enqueue(sseJson({ type: "response.in_progress", response: { id: responseId, object: "response", created, model, status: "in_progress" } }));
@@ -396,8 +435,9 @@ function streamResponses(
                   error: chunk.error,
                 },
               });
-              controller.enqueue(responseStreamFailedEvent({ responseId, created, model, message: chunk.error }));
-              controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+              controller.enqueue(responseStreamFailedEvent({ responseId, created, model, message: requestFailurePublicMessage() }));
+              clearInterval(heartbeat);
+              controller.enqueue(DONE_EVENT);
               controller.close();
               return;
             }
@@ -449,8 +489,9 @@ function streamResponses(
               duration_ms: Date.now() - startedAt,
             },
           });
-          controller.enqueue(responseStreamFailedEvent({ responseId, created, model, message: detail }));
-          controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+          controller.enqueue(responseStreamFailedEvent({ responseId, created, model, message: requestFailurePublicMessage() }));
+          clearInterval(heartbeat);
+          controller.enqueue(DONE_EVENT);
           controller.close();
           return;
         }
@@ -509,7 +550,8 @@ function streamResponses(
           },
         });
         controller.enqueue(sseJson({ type: "response.completed", response: completed }));
-        controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+        clearInterval(heartbeat);
+        controller.enqueue(DONE_EVENT);
         controller.close();
       },
     }),
@@ -521,4 +563,20 @@ function streamResponses(
       },
     },
   );
+}
+
+async function readJsonBody(request: Request): Promise<Record<string, unknown>> {
+  try {
+    return (await request.json()) as Record<string, unknown>;
+  } catch {
+    throw new HTTPException(400, { message: "请求体必须是有效 JSON" });
+  }
+}
+
+function assertUnsupportedParameters(payload: Record<string, unknown>, keys: string[]): void {
+  const provided = keys.filter((key) => Object.prototype.hasOwnProperty.call(payload, key) && payload[key] !== null);
+  if (!provided.length) {
+    return;
+  }
+  throw new HTTPException(400, { message: `当前代理暂不支持这些参数：${provided.join(", ")}` });
 }

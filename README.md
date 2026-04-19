@@ -69,6 +69,7 @@ npx wrangler secret put ZAI_JWT
 
 - `ACCOUNT_ENCRYPTION_KEY`：必填，用于加密存储账号凭证
 - `SETUP_TOKEN`：必填，用于首次初始化后台，避免匿名占坑
+- `SETUP_TOKEN`：调用 `/api/admin/setup` 时仅支持放在 `Authorization: Bearer <token>` 中
 - `PANEL_PASSWORD`：建议首发时直接设置；若不设置，则必须带 `SETUP_TOKEN` 先完成一次初始化
 - `API_PASSWORD`：可选，不填则 `/v1/*` 默认不开启密码
 - `ZAI_JWT` 或 `ZAI_SESSION_TOKEN`：二选一即可，推荐 `ZAI_JWT`
@@ -98,6 +99,9 @@ npm run deploy
 - `ADMIN_COOKIE_NAME`：默认 `zai2api_admin_session`
 - `ADMIN_SESSION_TTL_HOURS`：默认 `168`
 - `ADMIN_COOKIE_SECURE`：默认 `true`
+- `ADMIN_AUTH_MAX_ATTEMPTS`：默认 `5`
+- `ADMIN_AUTH_WINDOW_SECONDS`：默认 `900`
+- `ADMIN_AUTH_LOCK_SECONDS`：默认 `900`
 
 ## API 示例
 
@@ -132,3 +136,6 @@ curl https://your-worker.example.com/v1/responses \
 
 - 仓库中仍保留原 Python 代码作为迁移参考
 - Cloudflare 版为当前主线，后续新增功能默认在 `worker-src/` 和 `public/` 中演进
+- 当前仅稳定支持 `model`、`messages` / `input`、`stream`
+- 若传入 `tools`、`tool_choice`、`response_format`、`temperature` 等当前未实现参数，会直接返回 `400`，避免“看起来成功但其实未生效”
+- 后台写接口仅接受 `application/json`，并要求同源请求或显式管理请求头，避免 CSRF

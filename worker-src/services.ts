@@ -13,11 +13,19 @@ export interface AppServices {
   accountPool: AccountPool;
 }
 
+const servicesCache = new WeakMap<CloudflareBindings, AppServices>();
+
 export function createServices(env: CloudflareBindings): AppServices {
+  const cached = servicesCache.get(env);
+  if (cached) {
+    return cached;
+  }
   const config = loadConfig(env);
   const repository = new D1Repository(env.DB, env.ACCOUNT_ENCRYPTION_KEY, config.logRetentionDaysEnv);
   const auth = new AuthService(config, repository);
   const guestSource = new GuestSourceManager(config, repository);
   const accountPool = new AccountPool(config, repository, guestSource);
-  return { config, repository, auth, guestSource, accountPool };
+  const services = { config, repository, auth, guestSource, accountPool };
+  servicesCache.set(env, services);
+  return services;
 }

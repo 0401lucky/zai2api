@@ -5,6 +5,8 @@ import { maskSecret, nowSeconds, randomId } from "./utils";
 import { UpstreamHttpError, UpstreamRequestError, describeHttpError } from "./zai-client";
 
 export const NOTHINKING_MODEL_SUFFIX = "-nothinking";
+export const PUBLIC_UPSTREAM_ERROR_MESSAGE = "上游服务暂不可用，请稍后重试";
+export const PUBLIC_INTERNAL_ERROR_MESSAGE = "服务暂不可用，请稍后重试";
 export const PUBLIC_MODEL_ALIASES: Record<string, string> = {
   "glm-5": "glm-5",
   "glm-5.1": "GLM-5.1",
@@ -15,16 +17,15 @@ const UPSTREAM_TO_PUBLIC_MAP = Object.fromEntries(
 );
 
 export async function accountSummary(services: AppServices): Promise<Record<string, unknown>> {
-  const persistedHealthy = (await services.repository.listAccounts({ enabledOnly: true, healthyOnly: true })).length;
-  const persistedEnabled = await services.repository.countAccounts(true);
+  const counts = await services.repository.getAccountSummaryCounts();
   const guestSource = await services.guestSource.getSnapshot();
   return {
-    persisted_total: await services.repository.countAccounts(false),
-    persisted_enabled: persistedEnabled,
-    persisted_healthy: persistedHealthy,
-    using_guest_source: persistedHealthy === 0 && guestSource.inRotation,
+    persisted_total: counts.persistedTotal,
+    persisted_enabled: counts.persistedEnabled,
+    persisted_healthy: counts.persistedHealthy,
+    using_guest_source: counts.persistedHealthy === 0 && guestSource.inRotation,
     using_env_fallback:
-      persistedHealthy === 0 &&
+      counts.persistedHealthy === 0 &&
       !guestSource.inRotation &&
       Boolean(services.config.zaiJwt || services.config.zaiSessionToken),
   };
@@ -181,6 +182,10 @@ export function requestFailureStatusCode(error: unknown): number {
 
 export function requestFailureDetail(error: unknown): string {
   return describeHttpError(error);
+}
+
+export function requestFailurePublicMessage(): string {
+  return PUBLIC_UPSTREAM_ERROR_MESSAGE;
 }
 
 export function buildSessionCookie(config: AppConfig, sessionId: string): string {

@@ -24,6 +24,9 @@ export interface CloudflareBindings {
   ADMIN_SESSION_TTL_HOURS?: string;
   ADMIN_COOKIE_SECURE?: string;
   ADMIN_PASSWORD?: string;
+  ADMIN_AUTH_MAX_ATTEMPTS?: string;
+  ADMIN_AUTH_WINDOW_SECONDS?: string;
+  ADMIN_AUTH_LOCK_SECONDS?: string;
 }
 
 export type PasswordSource = "env" | "database" | "disabled";

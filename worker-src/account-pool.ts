@@ -16,6 +16,7 @@ interface RoutedSource {
 type ClientFactory = (jwt: string | null, sessionToken: string | null) => ZAIClient;
 
 let accountCursor = 0;
+const ACCOUNT_CHECK_BATCH_SIZE = 5;
 
 export class AccountPool {
   constructor(
@@ -119,8 +120,9 @@ export class AccountPool {
   async checkAllAccounts(): Promise<AccountRecord[]> {
     const accounts = await this.repository.listAccounts({ enabledOnly: true });
     const results: AccountRecord[] = [];
-    for (const account of accounts) {
-      results.push(await this.checkAccount(account.id));
+    for (let index = 0; index < accounts.length; index += ACCOUNT_CHECK_BATCH_SIZE) {
+      const batch = accounts.slice(index, index + ACCOUNT_CHECK_BATCH_SIZE);
+      results.push(...(await Promise.all(batch.map((account) => this.checkAccount(account.id)))));
     }
     return results;
   }
