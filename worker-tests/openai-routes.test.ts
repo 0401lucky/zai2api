@@ -80,6 +80,49 @@ function makeApp(services: unknown): Hono<AppEnv> {
 }
 
 describe("openai routes", () => {
+  it("兼容接受 chat completions 的 max_tokens 参数", async () => {
+    const { services } = makeServices({});
+    const app = makeApp(services);
+
+    const response = await app.request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "glm-5",
+        max_tokens: 128,
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      object: "chat.completion",
+      model: "glm-5",
+    });
+  });
+
+  it("兼容接受 responses 的 max_output_tokens 参数", async () => {
+    const { services } = makeServices({});
+    const app = makeApp(services);
+
+    const response = await app.request("http://localhost/v1/responses", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "glm-5",
+        input: "hello",
+        max_output_tokens: 128,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      object: "response",
+      model: "glm-5",
+      status: "completed",
+    });
+  });
+
   it("显式拒绝当前未支持的 OpenAI 参数", async () => {
     const { services } = makeServices({});
     const app = makeApp(services);

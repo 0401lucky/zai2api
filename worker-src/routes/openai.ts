@@ -25,8 +25,6 @@ const HEARTBEAT_EVENT = new TextEncoder().encode(": keepalive\n\n");
 const UNSUPPORTED_CHAT_PARAMETERS = [
   "temperature",
   "top_p",
-  "max_tokens",
-  "max_completion_tokens",
   "stop",
   "tools",
   "tool_choice",
@@ -41,7 +39,6 @@ const UNSUPPORTED_CHAT_PARAMETERS = [
 const UNSUPPORTED_RESPONSES_PARAMETERS = [
   "temperature",
   "top_p",
-  "max_output_tokens",
   "tools",
   "tool_choice",
   "response_format",
