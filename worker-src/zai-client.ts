@@ -2,10 +2,34 @@ import type { SessionState, TokenUsage, UpstreamChunk, UpstreamResult } from "./
 import type { AppConfig } from "./config";
 import { encodeUtf8, fromBase64Url, normalizeUsage, toArrayBuffer, toBase64, toHex } from "./utils";
 
-const FE_VERSION = "prod-fe-1.0.272";
+const FE_VERSION_FALLBACK = "prod-fe-1.1.21";
 const SIGNING_SECRET = "key-@@@@)))()((9))-xxxx&&&%%%%%";
 const USER_AGENT = "Mozilla/5.0";
 const SESSION_CACHE_TTL_MS = 10 * 60 * 1000;
+const FE_VERSION_CACHE_TTL_MS = 60 * 60 * 1000;
+
+let cachedFeVersion: { value: string; expiresAt: number } | null = null;
+
+async function getFeVersion(baseUrl: string): Promise<string> {
+  if (cachedFeVersion && cachedFeVersion.expiresAt > Date.now()) {
+    return cachedFeVersion.value;
+  }
+  try {
+    const response = await fetch(baseUrl, {
+      headers: { "User-Agent": USER_AGENT },
+      redirect: "follow",
+    });
+    const html = await response.text();
+    const match = html.match(/prod-fe-[\d.]+/);
+    if (match) {
+      cachedFeVersion = { value: match[0], expiresAt: Date.now() + FE_VERSION_CACHE_TTL_MS };
+      return match[0];
+    }
+  } catch {
+    // fall through to fallback
+  }
+  return FE_VERSION_FALLBACK;
+}
 
 interface CachedSessionEntry {
   session: SessionState;
@@ -96,9 +120,10 @@ async function requestWithConfig(
   path: string,
   init: { headers?: Record<string, string>; body?: BodyInit | null },
 ): Promise<Response> {
+  const feVersion = await getFeVersion(config.zaiBaseUrl);
   const headers = new Headers({
     "User-Agent": USER_AGENT,
-    "X-FE-Version": FE_VERSION,
+    "X-FE-Version": feVersion,
     "Accept-Language": "en-US",
     ...init.headers,
   });
@@ -492,7 +517,7 @@ export class ZAIClient {
       hostname: "chat.z.ai",
       protocol: "https:",
       referrer: "https://chat.z.ai/",
-      title: "Z.ai - Free AI Chatbot & Agent powered by GLM-5 & GLM-4.7",
+      title: "Z.ai - Free AI Chatbot & Agent powered by GLM-5.1 & GLM-5",
       timezone_offset: "-480",
       local_time: formatFixedOffsetLocalTime(now, 8 * 60),
       utc_time: formatUtcTime(now),
