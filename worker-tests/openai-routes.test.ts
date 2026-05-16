@@ -32,6 +32,7 @@ function makeServices(options: {
       accountPollIntervalSeconds: 0,
       accountErrorThreshold: 3,
       accountCooldownSeconds: 60,
+      accountMaxAttemptsPerRequest: 4,
       logRetentionDaysEnv: null,
     },
     auth: {

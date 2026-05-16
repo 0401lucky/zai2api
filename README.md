@@ -96,6 +96,7 @@ npm run deploy
 - `REQUEST_TIMEOUT`：默认 `120` 秒
 - `LOG_RETENTION_DAYS`：默认 `7`
 - `ACCOUNT_POLL_INTERVAL_SECONDS`：默认 `300`
+- `ACCOUNT_MAX_ATTEMPTS_PER_REQUEST`：默认 `4`，限制单次请求最多尝试的账号数，避免 Cloudflare subrequest 限制
 - `ADMIN_COOKIE_NAME`：默认 `zai2api_admin_session`
 - `ADMIN_SESSION_TTL_HOURS`：默认 `168`
 - `ADMIN_COOKIE_SECURE`：默认 `true`

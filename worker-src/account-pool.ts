@@ -2,7 +2,7 @@ import type { AccountRecord, GuestSourceSnapshot, UpstreamChunk, UpstreamResult 
 import type { AppConfig } from "./config";
 import { GuestSourceManager } from "./guest-source";
 import { D1Repository } from "./repository";
-import { ZAIClient, UpstreamHttpError, describeHttpError } from "./zai-client";
+import { ZAIClient, UpstreamHttpError, UpstreamRequestError, describeHttpError } from "./zai-client";
 
 interface RoutedSource {
   sourceType: "account" | "guest" | "env";
@@ -144,6 +144,9 @@ export class AccountPool {
           return await this.guestSource.collectPrompt(input);
         } catch (error) {
           lastError = error;
+          if (this.isWorkerSubrequestLimit(error)) {
+            throw error;
+          }
           continue;
         }
       }
@@ -155,6 +158,9 @@ export class AccountPool {
         return result;
       } catch (error) {
         lastError = error;
+        if (this.isWorkerSubrequestLimit(error)) {
+          throw error;
+        }
         await this.handleFailure(routed, error);
       }
     }
@@ -216,6 +222,9 @@ export class AccountPool {
         return;
       } catch (error) {
         lastError = error;
+        if (this.isWorkerSubrequestLimit(error)) {
+          throw error;
+        }
         if (routed.sourceType !== "guest") {
           await this.handleFailure(routed, error);
         }
@@ -281,14 +290,14 @@ export class AccountPool {
     if (rotating.length) {
       const start = accountCursor % rotating.length;
       accountCursor = (start + 1) % rotating.length;
-      return [...rotating.slice(start), ...rotating.slice(0, start), ...cooldown, ...envFallback];
+      return this.limitCandidates([...rotating.slice(start), ...rotating.slice(0, start), ...cooldown, ...envFallback]);
     }
 
     if (cooldown.length) {
-      return [...cooldown, ...envFallback];
+      return this.limitCandidates([...cooldown, ...envFallback]);
     }
 
-    return envFallback;
+    return this.limitCandidates(envFallback);
   }
 
   private async markSuccess(routed: RoutedSource, client: ZAIClient): Promise<void> {
@@ -330,5 +339,20 @@ export class AccountPool {
       return error.message.includes("缺少 ZAI_JWT 或 ZAI_SESSION_TOKEN");
     }
     return false;
+  }
+
+  private limitCandidates(candidates: RoutedSource[]): RoutedSource[] {
+    const maxAttempts = this.config.accountMaxAttemptsPerRequest;
+    if (candidates.length <= maxAttempts) {
+      return candidates;
+    }
+    const envFallback = candidates.filter((candidate) => candidate.sourceType === "env");
+    const primary = candidates.filter((candidate) => candidate.sourceType !== "env");
+    const primaryLimit = Math.max(0, maxAttempts - envFallback.length);
+    return [...primary.slice(0, primaryLimit), ...envFallback.slice(0, maxAttempts)];
+  }
+
+  private isWorkerSubrequestLimit(error: unknown): boolean {
+    return error instanceof UpstreamRequestError && error.message.includes("Too many subrequests");
   }
 }

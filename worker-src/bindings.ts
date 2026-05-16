@@ -20,6 +20,7 @@ export interface CloudflareBindings {
   ACCOUNT_POLL_INTERVAL_SECONDS?: string;
   ACCOUNT_ERROR_THRESHOLD?: string;
   ACCOUNT_COOLDOWN_SECONDS?: string;
+  ACCOUNT_MAX_ATTEMPTS_PER_REQUEST?: string;
   ADMIN_COOKIE_NAME?: string;
   ADMIN_SESSION_TTL_HOURS?: string;
   ADMIN_COOKIE_SECURE?: string;

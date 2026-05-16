@@ -28,6 +28,7 @@ function makeConfig(): AppConfig {
     accountPollIntervalSeconds: 0,
     accountErrorThreshold: 1,
     accountCooldownSeconds: 60,
+    accountMaxAttemptsPerRequest: 4,
     logRetentionDaysEnv: null,
   };
 }

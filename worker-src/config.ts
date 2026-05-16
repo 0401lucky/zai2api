@@ -22,6 +22,7 @@ export interface AppConfig {
   accountPollIntervalSeconds: number;
   accountErrorThreshold: number;
   accountCooldownSeconds: number;
+  accountMaxAttemptsPerRequest: number;
   logRetentionDaysEnv: number | null;
 }
 
@@ -59,6 +60,7 @@ export function loadConfig(env: CloudflareBindings): AppConfig {
     accountPollIntervalSeconds: parseInteger(env.ACCOUNT_POLL_INTERVAL_SECONDS, 300),
     accountErrorThreshold: parseInteger(env.ACCOUNT_ERROR_THRESHOLD, 3),
     accountCooldownSeconds: parseInteger(env.ACCOUNT_COOLDOWN_SECONDS, 60),
+    accountMaxAttemptsPerRequest: Math.max(1, parseInteger(env.ACCOUNT_MAX_ATTEMPTS_PER_REQUEST, 4)),
     logRetentionDaysEnv: env.LOG_RETENTION_DAYS ? parseInteger(env.LOG_RETENTION_DAYS, DEFAULT_LOG_RETENTION_DAYS) : null,
   };
 }

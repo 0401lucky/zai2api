@@ -58,6 +58,13 @@ export class UpstreamRequestError extends Error {
   }
 }
 
+class UpstreamSessionRefreshRequired extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UpstreamSessionRefreshRequired";
+  }
+}
+
 async function hmacHex(key: string, data: string): Promise<string> {
   const cryptoKey = await crypto.subtle.importKey(
     "raw",
@@ -121,10 +128,16 @@ async function requestWithConfig(
   init: { headers?: Record<string, string>; body?: BodyInit | null },
 ): Promise<Response> {
   const feVersion = await getFeVersion(config.zaiBaseUrl);
+  const upstreamOrigin = new URL(config.zaiBaseUrl).origin;
   const headers = new Headers({
     "User-Agent": USER_AGENT,
     "X-FE-Version": feVersion,
     "Accept-Language": "en-US",
+    Origin: upstreamOrigin,
+    Referer: `${upstreamOrigin}/`,
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
     ...init.headers,
   });
   if (init.body && !headers.has("Content-Type")) {
@@ -214,7 +227,7 @@ export class ZAIClient {
       }
     }
 
-    if (this.session && !forceRefresh && (this.zaiJwt || this.sessionValidated)) {
+    if (this.session && !forceRefresh && this.sessionValidated) {
       return this.session;
     }
 
@@ -320,10 +333,10 @@ export class ZAIClient {
         });
         return;
       } catch (error) {
-        if (error instanceof UpstreamHttpError && error.statusCode === 401) {
+        if (this.shouldRefreshSession(error)) {
           this.clearCachedSession();
         }
-        if (error instanceof UpstreamHttpError && error.statusCode === 401 && this.zaiJwt && attempt === 0) {
+        if (this.shouldRefreshSession(error) && this.zaiJwt && attempt === 0) {
           continue;
         }
         throw error;
@@ -428,6 +441,7 @@ export class ZAIClient {
       throw new UpstreamRequestError("上游响应体为空", `POST ${path}`);
     }
 
+    let hasEmittedContent = false;
     for await (const line of iterateLines(response.body)) {
       const trimmed = line.trim();
       if (!trimmed || !trimmed.startsWith("data:")) {
@@ -445,8 +459,14 @@ export class ZAIClient {
       const error = data.error;
       if (error) {
         const detail = typeof error === "object" && error && "detail" in error ? String((error as Record<string, unknown>).detail) : String(error);
+        if (!hasEmittedContent && this.isSessionRefreshMessage(detail)) {
+          throw new UpstreamSessionRefreshRequired(detail);
+        }
         yield { phase: null, text: "", done: true, error: detail };
         continue;
+      }
+      if (data.delta_content || data.content) {
+        hasEmittedContent = true;
       }
       yield {
         phase: String(data.phase ?? "answer"),
@@ -592,5 +612,16 @@ export class ZAIClient {
       return;
     }
     sessionCache.delete(this.cacheKey);
+  }
+
+  private shouldRefreshSession(error: unknown): boolean {
+    if (error instanceof UpstreamHttpError) {
+      return error.statusCode === 401;
+    }
+    return error instanceof UpstreamSessionRefreshRequired;
+  }
+
+  private isSessionRefreshMessage(message: string): boolean {
+    return message.includes("Please refresh the page to update the app");
   }
 }

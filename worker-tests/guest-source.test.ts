@@ -45,6 +45,7 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     accountPollIntervalSeconds: 0,
     accountErrorThreshold: 3,
     accountCooldownSeconds: 60,
+    accountMaxAttemptsPerRequest: 4,
     logRetentionDaysEnv: null,
     ...overrides,
   };
