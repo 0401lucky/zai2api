@@ -18,6 +18,7 @@ from .config import Settings
 FE_VERSION = "prod-fe-1.1.33"
 SIGNING_SECRET = "key-@@@@)))()((9))-xxxx&&&%%%%%"
 USER_AGENT = "Mozilla/5.0"
+SESSION_REFRESH_MESSAGE = "Please refresh the page to update the app"
 
 
 @dataclass(slots=True)
@@ -46,6 +47,10 @@ class UpstreamResult:
     finish_reason: str
 
 
+class UpstreamSessionRefreshRequired(RuntimeError):
+    pass
+
+
 class ZAIClient:
     def __init__(
         self,
@@ -66,6 +71,11 @@ class ZAIClient:
                 "User-Agent": USER_AGENT,
                 "X-FE-Version": FE_VERSION,
                 "Accept-Language": "en-US",
+                "Origin": settings.zai_base_url,
+                "Referer": f"{settings.zai_base_url.rstrip('/')}/",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-origin",
             },
         )
         self._lock = asyncio.Lock()
@@ -79,7 +89,7 @@ class ZAIClient:
 
     async def ensure_session(self, force_refresh: bool = False) -> SessionState:
         async with self._lock:
-            if self._session and not force_refresh and (self.zai_jwt or self._session_validated):
+            if self._session and not force_refresh and self._session_validated:
                 return self._session
 
             if self.zai_jwt:
@@ -182,8 +192,8 @@ class ZAIClient:
                 ):
                     yield chunk
                 return
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code == 401 and self.zai_jwt and attempt == 0:
+            except (httpx.HTTPStatusError, UpstreamSessionRefreshRequired) as exc:
+                if self._should_refresh_session(exc) and self.zai_jwt and attempt == 0:
                     continue
                 raise
 
@@ -286,6 +296,7 @@ class ZAIClient:
                 yield chunk
 
     async def _iter_sse(self, response: httpx.Response) -> AsyncIterator[UpstreamChunk]:
+        has_emitted_content = False
         async for line in response.aiter_lines():
             line = line.strip()
             if not line or not line.startswith("data:"):
@@ -302,11 +313,15 @@ class ZAIClient:
             error = data.get("error")
             if error:
                 detail = error.get("detail") if isinstance(error, dict) else str(error)
+                if not has_emitted_content and SESSION_REFRESH_MESSAGE in detail:
+                    raise UpstreamSessionRefreshRequired(detail)
                 yield UpstreamChunk(phase=None, text="", done=True, error=detail)
                 continue
 
             usage = normalize_usage(data.get("usage")) if data.get("usage") else None
             text = data.get("delta_content") or data.get("content") or ""
+            if text:
+                has_emitted_content = True
             yield UpstreamChunk(
                 phase=data.get("phase") or "answer",
                 text=text,
@@ -423,6 +438,13 @@ class ZAIClient:
             )
         except Exception:
             return SessionState(token=token, user_id="unknown", name="unknown", email="", role="user")
+
+    def _should_refresh_session(self, error: Exception) -> bool:
+        return (
+            isinstance(error, UpstreamSessionRefreshRequired)
+            or isinstance(error, httpx.HTTPStatusError)
+            and error.response.status_code == 401
+        )
 
 
 def normalize_usage(usage: Any) -> dict[str, int]:

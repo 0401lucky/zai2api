@@ -142,3 +142,18 @@ curl https://your-worker.example.com/v1/responses \
 - `temperature`、`top_p`、`tools`、`tool_choice`、`response_format` 等常见 OpenAI 参数会做兼容忽略，不再直接返回 `400`
 - 其中 `tools` / `tool_choice` 当前仅做兼容透传前忽略，不会真正执行函数调用或工具编排
 - 后台写接口仅接受 `application/json`，并要求同源请求或显式管理请求头，避免 CSRF
+
+## Zeabur / Docker 部署
+
+Zeabur 可以直接识别根目录 `Dockerfile`，按 Python FastAPI 版本部署，不依赖 Cloudflare Worker / D1。
+
+建议配置：
+
+- 构建方式：GitHub 仓库导入，使用根目录 `Dockerfile`
+- HTTP 端口：使用 Zeabur 注入的 `PORT`，镜像默认监听 `8000`
+- 持久化硬盘：挂载到 `/app/data`，用于保存 SQLite 数据库与账号池
+- 必填环境变量：`PANEL_PASSWORD`
+- 推荐环境变量：`DEFAULT_MODEL=glm-5.1`、`REQUEST_TIMEOUT=120`、`ADMIN_COOKIE_SECURE=true`
+- 可选环境变量：`API_PASSWORD`、`ZAI_JWT`、`ZAI_SESSION_TOKEN`
+
+如果不挂载 `/app/data`，重启或重新部署后后台账号与日志会丢失。

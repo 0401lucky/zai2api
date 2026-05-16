@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from .account_pool import AccountPool
 from .admin_page import render_admin_page
 from .auth import AuthService
-from .config import DEFAULT_LOG_RETENTION_DAYS, Settings, settings
+from .config import DEFAULT_LOG_RETENTION_DAYS, DEFAULT_MODEL, Settings, settings
 from .db import AccountRecord, Database, LOG_RETENTION_DAYS_KEY, LogRecord
 from .prompt_assembly import assemble_prompt
 from .zai_client import UpstreamResult, ZAIClient, describe_http_error, normalize_usage
@@ -1110,7 +1110,7 @@ def resolve_model_request(requested_model: str) -> tuple[str, bool]:
 def normalize_public_model_name(requested_model: str) -> str:
     normalized_model = requested_model.strip()
     if not normalized_model:
-        return "glm-5"
+        return DEFAULT_MODEL
     has_nothinking = normalized_model.lower().endswith(NOTHINKING_MODEL_SUFFIX)
     base_model = normalized_model[: -len(NOTHINKING_MODEL_SUFFIX)] if has_nothinking else normalized_model
     public_model = canonical_public_model_name(base_model)
