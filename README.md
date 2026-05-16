@@ -92,7 +92,7 @@ npm run deploy
 - `ZAI_JWT`：首选认证来源
 - `ZAI_SESSION_TOKEN`：可选，会先向 `/api/v1/auths/` 校验/刷新
 - `ZAI_GUEST_ENABLED`：显式开启游客来源，默认 `false`
-- `DEFAULT_MODEL`：默认 `glm-5`
+- `DEFAULT_MODEL`：默认 `glm-5.1`
 - `REQUEST_TIMEOUT`：默认 `120` 秒
 - `LOG_RETENTION_DAYS`：默认 `7`
 - `ACCOUNT_POLL_INTERVAL_SECONDS`：默认 `300`
@@ -112,7 +112,7 @@ curl https://your-worker.example.com/v1/chat/completions \
   -H 'content-type: application/json' \
   -H 'authorization: Bearer your-api-password' \
   -d '{
-    "model": "glm-5",
+    "model": "glm-5.1",
     "messages": [
       {"role": "system", "content": "请简洁回答。"},
       {"role": "user", "content": "打个招呼。"}
@@ -127,7 +127,7 @@ curl https://your-worker.example.com/v1/responses \
   -H 'content-type: application/json' \
   -H 'authorization: Bearer your-api-password' \
   -d '{
-    "model": "glm-5",
+    "model": "glm-5.1",
     "input": "打个招呼。"
   }'
 ```

@@ -26,6 +26,7 @@ export interface AppConfig {
 }
 
 export const DEFAULT_LOG_RETENTION_DAYS = 7;
+export const DEFAULT_MODEL = "glm-5.1";
 export const DEFAULT_ADMIN_COOKIE_NAME = "zai2api_admin_session";
 export const PANEL_PASSWORD_KEY = "panel_password_hash";
 export const API_PASSWORD_KEY = "api_password_hash";
@@ -45,7 +46,7 @@ export function loadConfig(env: CloudflareBindings): AppConfig {
     guestEnabled: guestEnabledEnv ?? false,
     guestEnabledEnv,
     setupToken: env.SETUP_TOKEN ?? null,
-    defaultModel: env.DEFAULT_MODEL ?? "glm-5",
+    defaultModel: env.DEFAULT_MODEL ?? DEFAULT_MODEL,
     requestTimeoutMs: parseInteger(env.REQUEST_TIMEOUT, 120) * 1000,
     panelPasswordEnv: env.PANEL_PASSWORD ?? env.ADMIN_PASSWORD ?? null,
     apiPasswordEnv: env.API_PASSWORD ?? null,

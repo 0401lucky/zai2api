@@ -34,4 +34,13 @@ describe("config", () => {
     expect(config.adminAuthWindowSeconds).toBe(900);
     expect(config.adminAuthLockSeconds).toBe(900);
   });
+
+  it("默认模型跟随当前上游默认值", () => {
+    const config = loadConfig({
+      DB: {} as D1Database,
+      ASSETS: { fetch: async () => new Response("ok") },
+      ACCOUNT_ENCRYPTION_KEY: "secret",
+    });
+    expect(config.defaultModel).toBe("glm-5.1");
+  });
 });

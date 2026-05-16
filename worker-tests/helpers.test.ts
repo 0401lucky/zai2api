@@ -10,6 +10,7 @@ describe("model helpers", () => {
   it("可以把上游模型名归一化为公开模型名", () => {
     expect(normalizePublicModelName("GLM-5-Turbo")).toBe("glm-5-turbo");
     expect(normalizePublicModelName("glm-5-turbo-nothinking")).toBe("glm-5-turbo-nothinking");
+    expect(normalizePublicModelName("")).toBe("glm-5.1");
   });
 
   it("可以解析上游模型与思考开关", () => {

@@ -174,19 +174,43 @@ export class AccountPool {
     let lastError: unknown;
     for (const routed of candidates) {
       let started = false;
+      let failedBeforeOutput = false;
       try {
         if (routed.sourceType === "guest") {
           for await (const chunk of this.guestSource.streamPrompt(input)) {
+            if (chunk.error) {
+              lastError = new Error(chunk.error);
+              failedBeforeOutput = !started;
+              if (started) {
+                throw lastError;
+              }
+              break;
+            }
             started = true;
             yield chunk;
+          }
+          if (failedBeforeOutput) {
+            continue;
           }
           return;
         }
 
         const client = this.clientFactory(routed.jwt, routed.sessionToken);
         for await (const chunk of client.streamPrompt(input)) {
+          if (chunk.error) {
+            lastError = new Error(chunk.error);
+            failedBeforeOutput = !started;
+            if (started) {
+              throw lastError;
+            }
+            await this.handleFailure(routed, lastError);
+            break;
+          }
           started = true;
           yield chunk;
+        }
+        if (failedBeforeOutput) {
+          continue;
         }
         await this.markSuccess(routed, client);
         return;

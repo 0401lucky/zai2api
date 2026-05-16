@@ -1,5 +1,5 @@
 import type { AccountRecord, GuestSourceSnapshot, LogRecord, PasswordSource } from "./bindings";
-import { DEFAULT_LOG_RETENTION_DAYS, LOG_RETENTION_DAYS_KEY, type AppConfig } from "./config";
+import { DEFAULT_LOG_RETENTION_DAYS, DEFAULT_MODEL, LOG_RETENTION_DAYS_KEY, type AppConfig } from "./config";
 import type { AppServices } from "./services";
 import { maskSecret, nowSeconds, randomId } from "./utils";
 import { UpstreamHttpError, UpstreamRequestError, describeHttpError } from "./zai-client";
@@ -142,7 +142,7 @@ export function logRetentionCutoff(retentionDays: number): number {
 export function normalizePublicModelName(requestedModel: string): string {
   const normalizedModel = requestedModel.trim();
   if (!normalizedModel) {
-    return "glm-5";
+    return DEFAULT_MODEL;
   }
   const hasNoThinking = normalizedModel.toLowerCase().endsWith(NOTHINKING_MODEL_SUFFIX);
   const baseModel = hasNoThinking ? normalizedModel.slice(0, -NOTHINKING_MODEL_SUFFIX.length) : normalizedModel;

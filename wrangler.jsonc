@@ -19,7 +19,7 @@
     }
   ],
   "vars": {
-    "DEFAULT_MODEL": "glm-5",
+    "DEFAULT_MODEL": "glm-5.1",
     "LOG_LEVEL": "info",
     "REQUEST_TIMEOUT": "120",
     "LOG_RETENTION_DAYS": "7",
