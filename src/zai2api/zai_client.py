@@ -15,7 +15,7 @@ import httpx
 
 from .config import Settings
 
-FE_VERSION = "prod-fe-1.0.272"
+FE_VERSION = "prod-fe-1.1.33"
 SIGNING_SECRET = "key-@@@@)))()((9))-xxxx&&&%%%%%"
 USER_AGENT = "Mozilla/5.0"
 
@@ -273,7 +273,7 @@ class ZAIClient:
             },
             "stream_options": {"include_usage": True},
         }
-        path = f"/api/v2/chat/completions?{urlencode(query)}&signature_timestamp={timestamp_ms}"
+        path = f"/api/chat/completions?{urlencode(query)}&signature_timestamp={timestamp_ms}"
         headers = {
             "Authorization": f"Bearer {session.token}",
             "Content-Type": "application/json",
