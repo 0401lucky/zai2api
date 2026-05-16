@@ -130,4 +130,51 @@ describe("zai client", () => {
     expect(authCalls).toBe(2);
     expect(completionCalls).toBe(2);
   });
+
+  it("验证码错误会保留上游错误码且不会刷新会话重试", async () => {
+    let authCalls = 0;
+    let completionCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const request = input instanceof Request ? input : new Request(input);
+        const url = new URL(request.url);
+        if (url.pathname === "/") {
+          return new Response("prod-fe-1.1.33");
+        }
+        if (url.pathname === "/api/v1/auths/") {
+          authCalls += 1;
+          return jsonResponse({
+            token: "fresh-session-token",
+            id: "fresh-user",
+            name: "fresh",
+            email: "fresh@example.com",
+            role: "user",
+          });
+        }
+        if (url.pathname === "/api/v1/chats/new") {
+          return jsonResponse({ id: "chat-1" });
+        }
+        if (url.pathname === "/api/v2/chat/completions") {
+          completionCalls += 1;
+          return streamResponse(
+            'data: {"type":"chat:completion","data":{"error":{"detail":"请刷新页面以更新应用后重试。","code":"FRONTEND_CAPTCHA_REQUIRED","captcha_error_type":"missing_param"}}}\n\n',
+          );
+        }
+        throw new Error(`unexpected fetch ${request.method} ${url.pathname}`);
+      }),
+    );
+
+    const client = new ZAIClient(makeConfig(), "jwt-token-captcha", null);
+    await expect(
+      client.collectPrompt({
+        prompt: "hello",
+        model: "glm-4.7",
+        enableThinking: true,
+        autoWebSearch: false,
+      }),
+    ).rejects.toThrow("Z.ai 上游要求浏览器验证码");
+    expect(authCalls).toBe(1);
+    expect(completionCalls).toBe(1);
+  });
 });

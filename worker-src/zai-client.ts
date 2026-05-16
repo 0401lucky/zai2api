@@ -7,6 +7,8 @@ const SIGNING_SECRET = "key-@@@@)))()((9))-xxxx&&&%%%%%";
 const USER_AGENT = "Mozilla/5.0";
 const SESSION_CACHE_TTL_MS = 10 * 60 * 1000;
 const FE_VERSION_CACHE_TTL_MS = 60 * 60 * 1000;
+const CAPTCHA_REQUIRED_CODE = "FRONTEND_CAPTCHA_REQUIRED";
+const UPSTREAM_CAPTCHA_MESSAGE = "Z.ai 上游要求浏览器验证码，当前服务端无法自动完成";
 
 let cachedFeVersion: { value: string; expiresAt: number } | null = null;
 
@@ -62,6 +64,13 @@ class UpstreamSessionRefreshRequired extends Error {
   constructor(message: string) {
     super(message);
     this.name = "UpstreamSessionRefreshRequired";
+  }
+}
+
+class UpstreamCaptchaRequired extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UpstreamCaptchaRequired";
   }
 }
 
@@ -456,9 +465,12 @@ export class ZAIClient {
         continue;
       }
       const data = event.data ?? {};
-      const error = data.error;
+      const error = this.extractErrorPayload(data);
       if (error) {
-        const detail = typeof error === "object" && error && "detail" in error ? String((error as Record<string, unknown>).detail) : String(error);
+        const detail = this.formatUpstreamError(error);
+        if (!hasEmittedContent && this.isCaptchaError(error)) {
+          throw new UpstreamCaptchaRequired(detail);
+        }
         if (!hasEmittedContent && this.isSessionRefreshMessage(detail)) {
           throw new UpstreamSessionRefreshRequired(detail);
         }
@@ -624,4 +636,52 @@ export class ZAIClient {
   private isSessionRefreshMessage(message: string): boolean {
     return message.includes("Please refresh the page to update the app");
   }
+
+  private extractErrorPayload(data: Record<string, unknown>): unknown | null {
+    if (data.error) {
+      return data.error;
+    }
+    const nestedData = data.data;
+    if (nestedData && typeof nestedData === "object" && "error" in nestedData) {
+      return (nestedData as Record<string, unknown>).error ?? null;
+    }
+    return null;
+  }
+
+  private formatUpstreamError(error: unknown): string {
+    if (!error || typeof error !== "object") {
+      return String(error);
+    }
+    const payload = error as Record<string, unknown>;
+    const detail = String(payload.detail ?? payload.message ?? JSON.stringify(payload));
+    const code = stringValue(payload.code);
+    const errorCode = stringValue(payload.error_code);
+    const captchaType = stringValue(payload.captcha_error_type);
+    const markers = [
+      code ? `code=${code}` : null,
+      errorCode && errorCode !== code ? `error_code=${errorCode}` : null,
+      captchaType ? `captcha_error_type=${captchaType}` : null,
+    ].filter(Boolean);
+    const markerText = markers.length > 0 ? `（${markers.join("; ")}）` : "";
+    if (this.isCaptchaError(error)) {
+      return `${UPSTREAM_CAPTCHA_MESSAGE}${markerText}：${detail}`;
+    }
+    return `${detail}${markerText}`;
+  }
+
+  private isCaptchaError(error: unknown): boolean {
+    if (!error || typeof error !== "object") {
+      return false;
+    }
+    const payload = error as Record<string, unknown>;
+    return (
+      stringValue(payload.code) === CAPTCHA_REQUIRED_CODE ||
+      stringValue(payload.error_code) === CAPTCHA_REQUIRED_CODE ||
+      Boolean(stringValue(payload.captcha_error_type))
+    );
+  }
+}
+
+function stringValue(value: unknown): string {
+  return value === undefined || value === null ? "" : String(value);
 }

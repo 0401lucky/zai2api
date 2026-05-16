@@ -19,6 +19,8 @@ FE_VERSION = "prod-fe-1.1.33"
 SIGNING_SECRET = "key-@@@@)))()((9))-xxxx&&&%%%%%"
 USER_AGENT = "Mozilla/5.0"
 SESSION_REFRESH_MESSAGE = "Please refresh the page to update the app"
+CAPTCHA_REQUIRED_CODE = "FRONTEND_CAPTCHA_REQUIRED"
+UPSTREAM_CAPTCHA_MESSAGE = "Z.ai 上游要求浏览器验证码，当前服务端无法自动完成"
 
 
 @dataclass(slots=True)
@@ -48,6 +50,10 @@ class UpstreamResult:
 
 
 class UpstreamSessionRefreshRequired(RuntimeError):
+    pass
+
+
+class UpstreamCaptchaRequired(RuntimeError):
     pass
 
 
@@ -310,9 +316,11 @@ class ZAIClient:
                 continue
 
             data = event.get("data", {})
-            error = data.get("error")
+            error = self._extract_error_payload(data)
             if error:
-                detail = error.get("detail") if isinstance(error, dict) else str(error)
+                detail = self._format_upstream_error(error)
+                if not has_emitted_content and self._is_captcha_error(error):
+                    raise UpstreamCaptchaRequired(detail)
                 if not has_emitted_content and SESSION_REFRESH_MESSAGE in detail:
                     raise UpstreamSessionRefreshRequired(detail)
                 yield UpstreamChunk(phase=None, text="", done=True, error=detail)
@@ -444,6 +452,50 @@ class ZAIClient:
             isinstance(error, UpstreamSessionRefreshRequired)
             or isinstance(error, httpx.HTTPStatusError)
             and error.response.status_code == 401
+        )
+
+    def _extract_error_payload(self, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return None
+        error = data.get("error")
+        if error:
+            return error
+        nested_data = data.get("data")
+        if isinstance(nested_data, dict) and nested_data.get("error"):
+            return nested_data.get("error")
+        return None
+
+    def _format_upstream_error(self, error: Any) -> str:
+        if not isinstance(error, dict):
+            return str(error)
+
+        detail = str(error.get("detail") or error.get("message") or error)
+        code = error.get("code")
+        error_code = error.get("error_code")
+        captcha_type = error.get("captcha_error_type")
+        markers: list[str] = []
+        if code:
+            markers.append(f"code={code}")
+        if error_code and error_code != code:
+            markers.append(f"error_code={error_code}")
+        if captcha_type:
+            markers.append(f"captcha_error_type={captcha_type}")
+
+        marker_text = f"（{'; '.join(markers)}）" if markers else ""
+        if self._is_captcha_error(error):
+            return f"{UPSTREAM_CAPTCHA_MESSAGE}{marker_text}：{detail}"
+        return f"{detail}{marker_text}"
+
+    def _is_captcha_error(self, error: Any) -> bool:
+        if not isinstance(error, dict):
+            return False
+        code = str(error.get("code") or "")
+        error_code = str(error.get("error_code") or "")
+        captcha_type = str(error.get("captcha_error_type") or "")
+        return (
+            code == CAPTCHA_REQUIRED_CODE
+            or error_code == CAPTCHA_REQUIRED_CODE
+            or bool(captcha_type)
         )
 
 
