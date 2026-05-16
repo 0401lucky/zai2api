@@ -2,7 +2,7 @@ import type { SessionState, TokenUsage, UpstreamChunk, UpstreamResult } from "./
 import type { AppConfig } from "./config";
 import { encodeUtf8, fromBase64Url, normalizeUsage, toArrayBuffer, toBase64, toHex } from "./utils";
 
-const FE_VERSION_FALLBACK = "prod-fe-1.1.33";
+const FE_VERSION_FALLBACK = "prod-fe-1.1.21";
 const SIGNING_SECRET = "key-@@@@)))()((9))-xxxx&&&%%%%%";
 const USER_AGENT = "Mozilla/5.0";
 const SESSION_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -414,7 +414,7 @@ export class ZAIClient {
       stream_options: { include_usage: true },
     };
 
-    const path = `/api/chat/completions?${new URLSearchParams(query).toString()}&signature_timestamp=${timestampMs}`;
+    const path = `/api/v2/chat/completions?${new URLSearchParams(query).toString()}&signature_timestamp=${timestampMs}`;
     const response = await this.request("POST", path, {
       headers: {
         Authorization: `Bearer ${input.session.token}`,
