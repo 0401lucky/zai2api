@@ -15,7 +15,7 @@ import httpx
 
 from .config import Settings
 
-FE_VERSION = "prod-fe-1.0.272"
+FE_VERSION = "prod-fe-1.1.33"
 SIGNING_SECRET = "key-@@@@)))()((9))-xxxx&&&%%%%%"
 USER_AGENT = "Mozilla/5.0"
 

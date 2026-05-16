@@ -2,7 +2,7 @@ import type { SessionState, TokenUsage, UpstreamChunk, UpstreamResult } from "./
 import type { AppConfig } from "./config";
 import { encodeUtf8, fromBase64Url, normalizeUsage, toArrayBuffer, toBase64, toHex } from "./utils";
 
-const FE_VERSION_FALLBACK = "prod-fe-1.1.21";
+const FE_VERSION_FALLBACK = "prod-fe-1.1.33";
 const SIGNING_SECRET = "key-@@@@)))()((9))-xxxx&&&%%%%%";
 const USER_AGENT = "Mozilla/5.0";
 const SESSION_CACHE_TTL_MS = 10 * 60 * 1000;
