@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
 import random
 import time
@@ -27,23 +28,23 @@ CAPTCHA_LANGUAGE = "en"
 
 SOLVE_TIMEOUT = 30.0
 
-CAPTCHA_PAGE_HTML = f"""<!DOCTYPE html>
+CAPTCHA_PAGE_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Captcha</title>
 <style>
-  body{{margin:0;padding:0;display:flex;justify-content:center;align-items:center;
-        height:100vh;background:#f5f5f5;font-family:Arial,sans-serif}}
-  #cap-box{{width:340px;min-height:280px;background:#fff;border-radius:8px;
-            box-shadow:0 2px 12px rgba(0,0,0,.1);padding:20px;text-align:center}}
-  .title{{color:#333;margin-bottom:16px;font-size:14px}}
-  .spinner{{display:none;width:30px;height:30px;border:3px solid #e0e0e0;
+  body{margin:0;padding:0;display:flex;justify-content:center;align-items:center;
+        height:100vh;background:#f5f5f5;font-family:Arial,sans-serif}
+  #cap-box{width:340px;min-height:280px;background:#fff;border-radius:8px;
+            box-shadow:0 2px 12px rgba(0,0,0,.1);padding:20px;text-align:center}
+  .title{color:#333;margin-bottom:16px;font-size:14px}
+  .spinner{display:none;width:30px;height:30px;border:3px solid #e0e0e0;
             border-top-color:#007bff;border-radius:50%;animation:spin .8s linear infinite;
-            margin:60px auto}}
-  @keyframes spin{{to{{transform:rotate(360deg)}}}}
-  .status{{margin-top:12px;font-size:12px;color:#999}}
+            margin:60px auto}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .status{margin-top:12px;font-size:12px;color:#999}
 </style>
 </head>
 <body>
@@ -54,44 +55,17 @@ CAPTCHA_PAGE_HTML = f"""<!DOCTYPE html>
   <div class="status" id="status"></div>
 </div>
 <script>
-  window.__CAPTCHA_STATE__ = {{
+  window.__CAPTCHA_STATE__ = {
     ready: false,
+    sdkLoaded: false,
     result: null,
     error: null
-  }};
-  var el = document.getElementById('captcha-element');
-  var spinner = document.getElementById('spinner');
+  };
   var status = document.getElementById('status');
+  var spinner = document.getElementById('spinner');
   spinner.style.display = 'block';
-  status.textContent = 'Loading captcha...';
-  window.initAliyunCaptcha({{
-    sceneId: '{CAPTCHA_SCENE_ID}',
-    prefix: '{CAPTCHA_PREFIX}',
-    mode: '{CAPTCHA_MODE}',
-    region: '{CAPTCHA_REGION}',
-    language: '{CAPTCHA_LANGUAGE}',
-    element: '#captcha-element',
-    timeout: 30000,
-    success: function(data) {{
-      window.__CAPTCHA_STATE__.result = data;
-      status.textContent = 'Success';
-    }},
-    fail: function(reason) {{
-      window.__CAPTCHA_STATE__.error = 'fail:' + String(reason);
-      status.textContent = 'Failed: ' + reason;
-    }},
-    onError: function(err) {{
-      window.__CAPTCHA_STATE__.error = 'error:' + JSON.stringify(err);
-      status.textContent = 'Error';
-    }},
-    onReady: function() {{
-      window.__CAPTCHA_STATE__.ready = true;
-      spinner.style.display = 'none';
-      status.textContent = 'Drag the slider to verify';
-    }}
-  }});
+  status.textContent = 'Loading SDK...';
 </script>
-<script src="https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js"></script>
 </body>
 </html>
 """
@@ -139,6 +113,7 @@ class CaptchaSolver:
         except ImportError:
             raise RuntimeError("需安装 playwright: pip install playwright && playwright install chromium")
 
+        logger.info("正在启动 Chromium...")
         self._playwright = await async_playwright().start()
         self._browser = await self._playwright.chromium.launch(
             headless=True,
@@ -147,6 +122,8 @@ class CaptchaSolver:
                 "--disable-gpu",
                 "--disable-dev-shm-usage",
                 "--disable-blink-features=AutomationControlled",
+                "--ignore-certificate-errors",
+                "--disable-web-security",
                 "--window-size=420,500",
             ],
         )
@@ -167,19 +144,138 @@ class CaptchaSolver:
         """)
 
         self._page = await self._context.new_page()
+
+        # 步骤1: 加载基础 HTML（不含外部脚本，秒级完成）
+        logger.info("加载验证码基础页面...")
         await self._page.set_content(CAPTCHA_PAGE_HTML, wait_until="domcontentloaded")
-        await self._page.wait_for_function(
-            "window.__CAPTCHA_STATE__.ready === true", timeout=30000
-        )
+        await asyncio.sleep(1)
+
+        # 步骤2: 动态加载阿里云验证码 SDK（带独立超时和错误处理）
+        logger.info("加载阿里云验证码 SDK...")
+        sdk_url = "https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js"
+        try:
+            await self._page.add_script_tag(url=sdk_url)
+            logger.info("SDK 脚本加载完成")
+        except Exception as exc:
+            # 尝试备用 CDN
+            logger.warning("主 CDN 加载失败 (%s)，尝试备用地址...", exc)
+            try:
+                await self._page.add_script_tag(
+                    url="https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js"
+                )
+            except Exception as exc2:
+                raise RuntimeError(f"阿里云验证码 SDK 加载失败: {exc2}")
+
+        # 等待 SDK 就绪
+        try:
+            await self._page.wait_for_function(
+                "typeof window.initAliyunCaptcha === 'function'",
+                timeout=20000,
+            )
+            logger.info("验证码 SDK 就绪")
+        except Exception:
+            raise RuntimeError("验证码 SDK 函数未就绪，可能 CDN 连接超时")
+
+        # 步骤3: 注入验证码初始化代码
+        logger.info("初始化验证码组件...")
+        await self._page.evaluate(f"""
+            () => {{
+                var status = document.getElementById('status');
+                var spinner = document.getElementById('spinner');
+                status.textContent = 'Loading captcha...';
+                window.initAliyunCaptcha({{
+                    sceneId: '{CAPTCHA_SCENE_ID}',
+                    prefix: '{CAPTCHA_PREFIX}',
+                    mode: '{CAPTCHA_MODE}',
+                    region: '{CAPTCHA_REGION}',
+                    language: '{CAPTCHA_LANGUAGE}',
+                    element: '#captcha-element',
+                    timeout: 60000,
+                    success: function(data) {{
+                        window.__CAPTCHA_STATE__.result = data;
+                        status.textContent = 'Success';
+                    }},
+                    fail: function(reason) {{
+                        window.__CAPTCHA_STATE__.error = 'fail:' + String(reason);
+                        status.textContent = 'Failed: ' + reason;
+                    }},
+                    onError: function(err) {{
+                        window.__CAPTCHA_STATE__.error = 'error:' + JSON.stringify(err);
+                        status.textContent = 'Error';
+                    }},
+                    onReady: function() {{
+                        window.__CAPTCHA_STATE__.ready = true;
+                        spinner.style.display = 'none';
+                        status.textContent = 'Drag the slider to verify';
+                    }}
+                }});
+            }}
+        """)
+
+        # 步骤4: 等待验证码组件就绪（延长超时）
+        try:
+            await self._page.wait_for_function(
+                "window.__CAPTCHA_STATE__.ready === true",
+                timeout=45000,
+            )
+        except Exception:
+            # 检查是否 SDK 加载失败
+            error_state = await self._page.evaluate("() => window.__CAPTCHA_STATE__.error")
+            if error_state:
+                raise RuntimeError(f"验证码初始化错误: {error_state}")
+            raise RuntimeError("验证码组件就绪超时（45秒），可能是网络问题或 CDN 不可达")
+
+        logger.info("验证码页面就绪")
         self._started = True
-        logger.info("Playwright 验证码页面就绪")
 
     async def _reset_page(self) -> None:
         """重置验证码页面状态。"""
         try:
             await self._page.set_content(CAPTCHA_PAGE_HTML, wait_until="domcontentloaded")
+            await asyncio.sleep(0.5)
+            # 重新注入 SDK
+            sdk_url = "https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js"
+            await self._page.add_script_tag(url=sdk_url)
             await self._page.wait_for_function(
-                "window.__CAPTCHA_STATE__.ready === true", timeout=15000
+                "typeof window.initAliyunCaptcha === 'function'",
+                timeout=15000,
+            )
+            # 重新初始化验证码
+            await self._page.evaluate(f"""
+                () => {{
+                    window.__CAPTCHA_STATE__.result = null;
+                    window.__CAPTCHA_STATE__.error = null;
+                    window.__CAPTCHA_STATE__.ready = false;
+                    document.getElementById('captcha-element').innerHTML = '';
+                    document.getElementById('spinner').style.display = 'block';
+                    document.getElementById('status').textContent = 'Loading...';
+                    window.initAliyunCaptcha({{
+                        sceneId: '{CAPTCHA_SCENE_ID}',
+                        prefix: '{CAPTCHA_PREFIX}',
+                        mode: '{CAPTCHA_MODE}',
+                        region: '{CAPTCHA_REGION}',
+                        language: '{CAPTCHA_LANGUAGE}',
+                        element: '#captcha-element',
+                        timeout: 60000,
+                        success: function(data) {{
+                            window.__CAPTCHA_STATE__.result = data;
+                            document.getElementById('status').textContent = 'Success';
+                        }},
+                        fail: function(reason) {{
+                            window.__CAPTCHA_STATE__.error = 'fail:' + String(reason);
+                        }},
+                        onError: function(err) {{
+                            window.__CAPTCHA_STATE__.error = 'error:' + JSON.stringify(err);
+                        }},
+                        onReady: function() {{
+                            window.__CAPTCHA_STATE__.ready = true;
+                            document.getElementById('spinner').style.display = 'none';
+                        }}
+                    }});
+                }}
+            """)
+            await self._page.wait_for_function(
+                "window.__CAPTCHA_STATE__.ready === true", timeout=30000
             )
         except Exception as exc:
             logger.debug("重置页面失败（可忽略）: %s", exc)
