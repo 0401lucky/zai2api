@@ -294,7 +294,6 @@ class ZAIClient:
                 "title_generation": True,
                 "tags_generation": True,
             },
-            "stream_options": {"include_usage": True},
         }
         path = f"/api/v2/chat/completions?{urlencode(query)}&signature_timestamp={timestamp_ms}"
         headers = {
@@ -305,6 +304,8 @@ class ZAIClient:
         }
         await self._ensure_fe_version()
         async with self._client.stream("POST", path, headers=headers, json=body) as response:
+            if response.is_error:
+                await response.aread()
             response.raise_for_status()
             async for chunk in self._iter_sse(response):
                 yield chunk
@@ -551,7 +552,24 @@ def describe_http_error(error: httpx.HTTPError) -> str:
         method = request.method if request is not None else "UNKNOWN"
         path = request.url.path if request is not None else ""
         location = f"{method} {path}".strip()
+        response_text = response_error_text(error.response)
+        suffix = f": {response_text}" if response_text else ""
         if location:
-            return f"上游接口错误: {location} -> HTTP {error.response.status_code}"
-        return f"上游接口错误: HTTP {error.response.status_code}"
+            return f"上游接口错误: {location} -> HTTP {error.response.status_code}{suffix}"
+        return f"上游接口错误: HTTP {error.response.status_code}{suffix}"
     return f"上游请求失败: {error.__class__.__name__}: {error}"
+
+
+def response_error_text(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except Exception:
+        payload = response.text
+    if isinstance(payload, dict):
+        detail = payload.get("detail") or payload.get("message") or payload.get("error")
+        if detail:
+            payload = detail
+    text = str(payload).strip()
+    if not text:
+        return ""
+    return text[:500]
