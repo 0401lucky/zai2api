@@ -95,19 +95,12 @@ class ZAIClient:
             headers={
                 "User-Agent": USER_AGENT,
                 "X-FE-Version": FE_VERSION_FALLBACK,
-                "Accept": "application/json, text/event-stream, */*",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Accept-Encoding": "gzip, deflate, br",
+                "Accept-Language": "en-US",
                 "Origin": settings.zai_base_url,
                 "Referer": f"{settings.zai_base_url.rstrip('/')}/",
                 "Sec-Fetch-Dest": "empty",
                 "Sec-Fetch-Mode": "cors",
                 "Sec-Fetch-Site": "same-origin",
-                "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-                "sec-ch-ua-mobile": "?0",
-                "sec-ch-ua-platform": '"Windows"',
-                "Cache-Control": "no-cache",
-                "Pragma": "no-cache",
             },
         )
         self._lock = asyncio.Lock()
@@ -461,10 +454,7 @@ class ZAIClient:
             "is_touch": "false",
             "max_touch_points": "0",
             "browser_name": "Chrome",
-            "browser_version": "131.0.0.0",
             "os_name": "Windows",
-            "os_version": "10.0",
-            "platform_arch": "x86_64",
         }
 
     def _default_variables(self, name: str) -> dict[str, str]:
@@ -614,7 +604,15 @@ def response_error_text(response: httpx.Response) -> str:
     try:
         payload = response.json()
     except Exception:
-        payload = response.text
+        try:
+            payload = response.text
+        except Exception:
+            # 响应体可能不是 UTF-8，尝试其他编码或直接返回原始信息
+            try:
+                raw = response.content
+                payload = raw.decode("latin-1", errors="replace")[:500]
+            except Exception:
+                payload = f"(无法解析响应体, HTTP {response.status_code})"
     if isinstance(payload, dict):
         detail = payload.get("detail") or payload.get("message") or payload.get("error")
         if detail:

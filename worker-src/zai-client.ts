@@ -141,15 +141,12 @@ async function requestWithConfig(
   const headers = new Headers({
     "User-Agent": USER_AGENT,
     "X-FE-Version": feVersion,
-    Accept: "application/json, text/event-stream, */*",
-    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Language": "en-US",
     Origin: upstreamOrigin,
     Referer: `${upstreamOrigin}/`,
     "Sec-Fetch-Dest": "empty",
     "Sec-Fetch-Mode": "cors",
     "Sec-Fetch-Site": "same-origin",
-    "Cache-Control": "no-cache",
-    Pragma: "no-cache",
     ...init.headers,
   });
   if (init.body && !headers.has("Content-Type")) {
@@ -560,10 +557,7 @@ export class ZAIClient {
       is_touch: "false",
       max_touch_points: "0",
       browser_name: "Chrome",
-      browser_version: "131.0.0.0",
       os_name: "Windows",
-      os_version: "10.0",
-      platform_arch: "x86_64",
     };
   }
 
