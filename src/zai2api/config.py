@@ -10,7 +10,7 @@ DEFAULT_PANEL_PASSWORD = "123456"
 DEFAULT_ADMIN_COOKIE_NAME = "zai2api_admin_session"
 DEFAULT_DATABASE_PATH = "data/zai2api.db"
 DEFAULT_LOG_RETENTION_DAYS = 7
-DEFAULT_MODEL = "glm-5.1"
+DEFAULT_MODEL = "glm-5.2"
 
 
 def _load_dotenv_file(path: str = ENV_FILE) -> None:

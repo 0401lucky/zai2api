@@ -83,6 +83,8 @@ def test_api_auth_is_disabled_by_default(tmp_path: Path) -> None:
         assert model_ids == [
             "glm-5",
             "glm-5-nothinking",
+            "glm-5.2",
+            "glm-5.2-nothinking",
             "glm-5.1",
             "glm-5.1-nothinking",
             "glm-5-turbo",

@@ -17,8 +17,15 @@ def test_session_token_is_exchanged_via_auths(tmp_path: Path) -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(f"{request.method} {request.url.path}")
+        if request.url.path == "/":
+            return httpx.Response(
+                200,
+                request=request,
+                text='https://z-cdn.chatglm.cn/z-ai/frontend/prod-fe-1.1.64/assets/index.js',
+            )
         assert request.url.path == "/api/v1/auths/"
         assert request.headers["Authorization"] == "Bearer raw-session-token"
+        assert request.headers["X-FE-Version"] == "prod-fe-1.1.64"
         return httpx.Response(
             200,
             request=request,
@@ -43,11 +50,11 @@ def test_session_token_is_exchanged_via_auths(tmp_path: Path) -> None:
             assert session.token == "fresh-session-token"
             assert session.name == "测试用户"
             assert client.zai_session_token == "fresh-session-token"
-            assert calls == ["GET /api/v1/auths/"]
+            assert calls == ["GET /", "GET /api/v1/auths/"]
 
             again = await client.ensure_session()
             assert again.token == "fresh-session-token"
-            assert calls == ["GET /api/v1/auths/"]
+            assert calls == ["GET /", "GET /api/v1/auths/"]
         finally:
             await client.aclose()
 
@@ -60,7 +67,14 @@ def test_captcha_error_keeps_upstream_code_and_does_not_refresh_session(tmp_path
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(f"{request.method} {request.url.path}")
+        if request.url.path == "/":
+            return httpx.Response(
+                200,
+                request=request,
+                text='https://z-cdn.chatglm.cn/z-ai/frontend/prod-fe-1.1.64/assets/index.js',
+            )
         if request.url.path == "/api/v1/auths/":
+            assert request.headers["X-FE-Version"] == "prod-fe-1.1.64"
             return httpx.Response(
                 200,
                 request=request,
@@ -108,6 +122,7 @@ def test_captcha_error_keeps_upstream_code_and_does_not_refresh_session(tmp_path
             assert "FRONTEND_CAPTCHA_REQUIRED" in message
             assert "captcha_error_type=missing_param" in message
             assert calls == [
+                "GET /",
                 "GET /api/v1/auths/",
                 "POST /api/v1/chats/new",
                 "POST /api/v2/chat/completions",

@@ -89,8 +89,9 @@ class AppServices:
 
 NOTHINKING_MODEL_SUFFIX = "-nothinking"
 PUBLIC_MODEL_ALIASES: dict[str, str] = {
-    "glm-5": "glm-5",
+    "glm-5.2": "GLM-5.2",
     "glm-5.1": "GLM-5.1",
+    "glm-5": "glm-5",
     "glm-5-turbo": "GLM-5-Turbo",
 }
 UPSTREAM_TO_PUBLIC_MAP: dict[str, str] = {upstream: public for public, upstream in PUBLIC_MODEL_ALIASES.items()}

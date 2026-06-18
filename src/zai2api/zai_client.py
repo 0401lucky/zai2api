@@ -5,9 +5,11 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any, AsyncIterator
 from urllib.parse import urlencode
 
@@ -15,7 +17,9 @@ import httpx
 
 from .config import Settings
 
-FE_VERSION = "prod-fe-1.1.33"
+FE_VERSION_FALLBACK = "prod-fe-1.1.64"
+FE_VERSION_PATTERN = re.compile(r"prod-fe-[\d.]+")
+FE_VERSION_CACHE_SECONDS = 3600
 SIGNING_SECRET = "key-@@@@)))()((9))-xxxx&&&%%%%%"
 USER_AGENT = "Mozilla/5.0"
 SESSION_REFRESH_MESSAGE = "Please refresh the page to update the app"
@@ -75,7 +79,7 @@ class ZAIClient:
             timeout=settings.request_timeout,
             headers={
                 "User-Agent": USER_AGENT,
-                "X-FE-Version": FE_VERSION,
+                "X-FE-Version": FE_VERSION_FALLBACK,
                 "Accept-Language": "en-US",
                 "Origin": settings.zai_base_url,
                 "Referer": f"{settings.zai_base_url.rstrip('/')}/",
@@ -87,6 +91,7 @@ class ZAIClient:
         self._lock = asyncio.Lock()
         self._session: SessionState | None = None
         self._session_validated = False
+        self._fe_version_expires_at = 0.0
         if self.zai_session_token:
             self._session = self._session_from_token(self.zai_session_token)
 
@@ -114,6 +119,7 @@ class ZAIClient:
 
     async def verify_completion_version(self) -> int:
         session = await self.ensure_session()
+        await self._ensure_fe_version()
         response = await self._client.get(
             "/api/config",
             headers={"Authorization": f"Bearer {session.token}"},
@@ -158,6 +164,7 @@ class ZAIClient:
             "message_version": 1,
             "timestamp": int(time.time() * 1000),
         }
+        await self._ensure_fe_version()
         response = await self._client.post(
             "/api/v1/chats/new",
             headers={"Authorization": f"Bearer {session.token}"},
@@ -296,6 +303,7 @@ class ZAIClient:
             "Accept": "application/json, text/event-stream",
             "X-Signature": signature,
         }
+        await self._ensure_fe_version()
         async with self._client.stream("POST", path, headers=headers, json=body) as response:
             response.raise_for_status()
             async for chunk in self._iter_sse(response):
@@ -366,6 +374,9 @@ class ZAIClient:
         request_id: str,
         timestamp_ms: str,
     ) -> dict[str, str]:
+        now = datetime.now(UTC)
+        local_time = now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        utc_time = now.strftime("%a, %d %b %Y %H:%M:%S GMT")
         return {
             "requestId": request_id,
             "timestamp": timestamp_ms,
@@ -394,10 +405,10 @@ class ZAIClient:
             "hostname": "chat.z.ai",
             "protocol": "https:",
             "referrer": "https://chat.z.ai/",
-            "title": "Z.ai - Free AI Chatbot & Agent powered by GLM-5 & GLM-4.7",
+            "title": "Z.ai - Advanced AI Chatbot & Agent powered by GLM-5.2",
             "timezone_offset": "-480",
-            "local_time": time.strftime("%a %b %d %Y %H:%M:%S GMT%z"),
-            "utc_time": time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime()),
+            "local_time": local_time,
+            "utc_time": utc_time,
             "is_mobile": "false",
             "is_touch": "false",
             "max_touch_points": "0",
@@ -406,18 +417,22 @@ class ZAIClient:
         }
 
     def _default_variables(self, name: str) -> dict[str, str]:
+        now = datetime.now(UTC) + timedelta(hours=8)
+        date = now.strftime("%Y-%m-%d")
+        time_text = now.strftime("%H:%M:%S")
         return {
             "{{USER_NAME}}": name,
             "{{USER_LOCATION}}": "Unknown",
-            "{{CURRENT_DATETIME}}": time.strftime("%Y-%m-%d %I:%M:%S %p"),
-            "{{CURRENT_DATE}}": time.strftime("%Y-%m-%d"),
-            "{{CURRENT_TIME}}": time.strftime("%I:%M:%S %p"),
-            "{{CURRENT_WEEKDAY}}": time.strftime("%A"),
+            "{{CURRENT_DATETIME}}": f"{date} {time_text}",
+            "{{CURRENT_DATE}}": date,
+            "{{CURRENT_TIME}}": time_text,
+            "{{CURRENT_WEEKDAY}}": now.strftime("%A"),
             "{{CURRENT_TIMEZONE}}": "UTC+8",
             "{{USER_LANGUAGE}}": "en-US",
         }
 
     async def _exchange_token(self, token: str) -> SessionState:
+        await self._ensure_fe_version()
         response = await self._client.get(
             "/api/v1/auths/",
             headers={"Authorization": f"Bearer {token}"},
@@ -446,6 +461,24 @@ class ZAIClient:
             )
         except Exception:
             return SessionState(token=token, user_id="unknown", name="unknown", email="", role="user")
+
+    async def _ensure_fe_version(self) -> None:
+        if self._fe_version_expires_at > time.time():
+            return
+        self._fe_version_expires_at = time.time() + FE_VERSION_CACHE_SECONDS
+        try:
+            response = await self._client.get(
+                "/",
+                headers={"User-Agent": USER_AGENT},
+                follow_redirects=True,
+            )
+            match = FE_VERSION_PATTERN.search(response.text)
+        except Exception:
+            match = None
+        if match:
+            self._client.headers["X-FE-Version"] = match.group(0)
+        else:
+            self._client.headers["X-FE-Version"] = FE_VERSION_FALLBACK
 
     def _should_refresh_session(self, error: Exception) -> bool:
         return (
