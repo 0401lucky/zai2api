@@ -5,9 +5,11 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import re
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, AsyncIterator
@@ -17,11 +19,22 @@ import httpx
 
 from .config import Settings
 
+logger = logging.getLogger(__name__)
+
 FE_VERSION_FALLBACK = "prod-fe-1.1.64"
 FE_VERSION_PATTERN = re.compile(r"prod-fe-[\d.]+")
 FE_VERSION_CACHE_SECONDS = 3600
 SIGNING_SECRET = "key-@@@@)))()((9))-xxxx&&&%%%%%"
-USER_AGENT = "Mozilla/5.0"
+
+# 模拟现代 Chrome 131 浏览器 —— 避免触发 Z.ai 的反机器人检测
+# 原先只用 "Mozilla/5.0" 极易被识别为爬虫
+_USER_AGENT_TEMPLATES = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+]
+USER_AGENT = _USER_AGENT_TEMPLATES[0]
+
 SESSION_REFRESH_MESSAGE = "Please refresh the page to update the app"
 CAPTCHA_REQUIRED_CODE = "FRONTEND_CAPTCHA_REQUIRED"
 UPSTREAM_CAPTCHA_MESSAGE = "Z.ai 上游要求浏览器验证码，当前服务端无法自动完成"
@@ -68,30 +81,40 @@ class ZAIClient:
         *,
         zai_jwt: str | None = None,
         zai_session_token: str | None = None,
+        captcha_token_provider: Callable[[], Any] | None = None,
     ):
         self.settings = settings
         self.zai_jwt = settings.zai_jwt if zai_jwt is None else zai_jwt
         self.zai_session_token = (
             settings.zai_session_token if zai_session_token is None else zai_session_token
         )
+        self._captcha_token_provider = captcha_token_provider
         self._client = httpx.AsyncClient(
             base_url=settings.zai_base_url,
             timeout=settings.request_timeout,
             headers={
                 "User-Agent": USER_AGENT,
                 "X-FE-Version": FE_VERSION_FALLBACK,
-                "Accept-Language": "en-US",
+                "Accept": "application/json, text/event-stream, */*",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Encoding": "gzip, deflate, br",
                 "Origin": settings.zai_base_url,
                 "Referer": f"{settings.zai_base_url.rstrip('/')}/",
                 "Sec-Fetch-Dest": "empty",
                 "Sec-Fetch-Mode": "cors",
                 "Sec-Fetch-Site": "same-origin",
+                "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
             },
         )
         self._lock = asyncio.Lock()
         self._session: SessionState | None = None
         self._session_validated = False
         self._fe_version_expires_at = 0.0
+        self._captcha_token_cached: str | None = None
         if self.zai_session_token:
             self._session = self._session_from_token(self.zai_session_token)
 
@@ -209,6 +232,17 @@ class ZAIClient:
                 if self._should_refresh_session(exc) and self.zai_jwt and attempt == 0:
                     continue
                 raise
+            except UpstreamCaptchaRequired as exc:
+                if attempt == 0 and self._captcha_token_provider is not None:
+                    logger.info("验证码令牌过期或无效，尝试获取新令牌后重试")
+                    self._captcha_token_cached = None  # 清除缓存令牌
+                    try:
+                        new_token = await self._captcha_token_provider()
+                        self._captcha_token_cached = new_token
+                        continue
+                    except Exception as token_exc:
+                        logger.warning("刷新验证码令牌失败: %s", token_exc)
+                raise
 
     async def collect_prompt(
         self,
@@ -270,7 +304,18 @@ class ZAIClient:
             request_id=request_id,
             timestamp_ms=timestamp_ms,
         )
-        body = {
+        # 获取验证码令牌（如果提供了验证码供应商）
+        captcha_param = None
+        if self._captcha_token_provider is not None:
+            if self._captcha_token_cached is not None:
+                captcha_param = self._captcha_token_cached
+            else:
+                try:
+                    captcha_param = await self._captcha_token_provider()
+                except Exception as exc:
+                    logger.warning("获取验证码令牌失败: %s", exc)
+
+        body: dict[str, Any] = {
             "stream": True,
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
@@ -295,6 +340,8 @@ class ZAIClient:
                 "tags_generation": True,
             },
         }
+        if captcha_param:
+            body["captcha_verify_param"] = captcha_param
         path = f"/api/v2/chat/completions?{urlencode(query)}&signature_timestamp={timestamp_ms}"
         headers = {
             "Authorization": f"Bearer {session.token}",
@@ -414,7 +461,10 @@ class ZAIClient:
             "is_touch": "false",
             "max_touch_points": "0",
             "browser_name": "Chrome",
-            "os_name": "Linux",
+            "browser_version": "131.0.0.0",
+            "os_name": "Windows",
+            "os_version": "10.0",
+            "platform_arch": "x86_64",
         }
 
     def _default_variables(self, name: str) -> dict[str, str]:

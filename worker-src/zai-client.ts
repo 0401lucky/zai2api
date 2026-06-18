@@ -2,9 +2,9 @@ import type { SessionState, TokenUsage, UpstreamChunk, UpstreamResult } from "./
 import type { AppConfig } from "./config";
 import { encodeUtf8, fromBase64Url, normalizeUsage, toArrayBuffer, toBase64, toHex } from "./utils";
 
-const FE_VERSION_FALLBACK = "prod-fe-1.1.33";
+const FE_VERSION_FALLBACK = "prod-fe-1.1.64";
 const SIGNING_SECRET = "key-@@@@)))()((9))-xxxx&&&%%%%%";
-const USER_AGENT = "Mozilla/5.0";
+const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 const SESSION_CACHE_TTL_MS = 10 * 60 * 1000;
 const FE_VERSION_CACHE_TTL_MS = 60 * 60 * 1000;
 const CAPTCHA_REQUIRED_CODE = "FRONTEND_CAPTCHA_REQUIRED";
@@ -141,12 +141,15 @@ async function requestWithConfig(
   const headers = new Headers({
     "User-Agent": USER_AGENT,
     "X-FE-Version": feVersion,
-    "Accept-Language": "en-US",
+    Accept: "application/json, text/event-stream, */*",
+    "Accept-Language": "en-US,en;q=0.9",
     Origin: upstreamOrigin,
     Referer: `${upstreamOrigin}/`,
     "Sec-Fetch-Dest": "empty",
     "Sec-Fetch-Mode": "cors",
     "Sec-Fetch-Site": "same-origin",
+    "Cache-Control": "no-cache",
+    Pragma: "no-cache",
     ...init.headers,
   });
   if (init.body && !headers.has("Content-Type")) {
@@ -549,7 +552,7 @@ export class ZAIClient {
       hostname: "chat.z.ai",
       protocol: "https:",
       referrer: "https://chat.z.ai/",
-      title: "Z.ai - Free AI Chatbot & Agent powered by GLM-5.1 & GLM-5",
+      title: "Z.ai - Advanced AI Chatbot & Agent powered by GLM-5.2",
       timezone_offset: "-480",
       local_time: formatFixedOffsetLocalTime(now, 8 * 60),
       utc_time: formatUtcTime(now),
@@ -557,7 +560,10 @@ export class ZAIClient {
       is_touch: "false",
       max_touch_points: "0",
       browser_name: "Chrome",
-      os_name: "Linux",
+      browser_version: "131.0.0.0",
+      os_name: "Windows",
+      os_version: "10.0",
+      platform_arch: "x86_64",
     };
   }
 

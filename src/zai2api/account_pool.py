@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Protocol
+from typing import Any, Protocol
 
 import httpx
 
@@ -56,11 +57,13 @@ class AccountPool:
         db: Database,
         *,
         client_factory: ClientFactory | None = None,
+        captcha_token_provider: Callable[[], Any] | None = None,
     ):
         self.settings = settings
         self.db = db
         self._lock = asyncio.Lock()
         self._cursor = 0
+        self._captcha_token_provider = captcha_token_provider
         self._client_factory = client_factory or self._default_client_factory
 
     async def register_jwt(self, jwt: str) -> AccountRecord:
@@ -297,7 +300,12 @@ class AccountPool:
             self.db.mark_account_failure(routed.account_id, error=error_text, disable=disable)
 
     def _default_client_factory(self, jwt: str | None, session_token: str | None) -> SupportsZAIClient:
-        return ZAIClient(self.settings, zai_jwt=jwt, zai_session_token=session_token)
+        return ZAIClient(
+            self.settings,
+            zai_jwt=jwt,
+            zai_session_token=session_token,
+            captcha_token_provider=self._captcha_token_provider,
+        )
 
     def _should_disable(self, error: Exception) -> bool:
         if isinstance(error, httpx.HTTPStatusError):

@@ -15,6 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from .account_pool import AccountPool
 from .admin_page import render_admin_page
 from .auth import AuthService
+from .captcha import CaptchaProvider, create_captcha_provider
 from .config import DEFAULT_LOG_RETENTION_DAYS, DEFAULT_MODEL, Settings, settings
 from .db import AccountRecord, Database, LOG_RETENTION_DAYS_KEY, LogRecord
 from .prompt_assembly import assemble_prompt
@@ -85,6 +86,7 @@ class AppServices:
     prompt_pool: SupportsPromptPool
     account_pool: AccountPool | None
     managed_upstream_client: ZAIClient | None
+    captcha_pool: CaptchaProvider | None
 
 
 NOTHINKING_MODEL_SUFFIX = "-nothinking"
@@ -112,6 +114,7 @@ def create_app(
 
     managed_upstream_client = upstream_client
     managed_account_pool = account_pool
+    managed_captcha_pool: CaptchaProvider | None = None
 
     if prompt_pool is None:
         if managed_account_pool is not None:
@@ -119,7 +122,14 @@ def create_app(
         elif managed_upstream_client is not None:
             resolved_prompt_pool = SingleClientPool(managed_upstream_client)
         else:
-            managed_account_pool = AccountPool(resolved_settings, db)
+            # 初始化验证码令牌供应商并注入到账号池（可通过 CAPTCHA_ENABLED=false 禁用）
+            if resolved_settings.captcha_enabled:
+                managed_captcha_pool = create_captcha_provider(resolved_settings)
+            managed_account_pool = AccountPool(
+                resolved_settings,
+                db,
+                captcha_token_provider=managed_captcha_pool.get_token if managed_captcha_pool else None,
+            )
             resolved_prompt_pool = managed_account_pool
     else:
         resolved_prompt_pool = prompt_pool
@@ -133,6 +143,7 @@ def create_app(
         prompt_pool=resolved_prompt_pool,
         account_pool=managed_account_pool,
         managed_upstream_client=managed_upstream_client,
+        captcha_pool=managed_captcha_pool,
     )
 
     @asynccontextmanager
@@ -159,6 +170,10 @@ def create_app(
         if services.account_pool is not None and services.settings.account_poll_interval_seconds > 0:
             poll_task = asyncio.create_task(run_account_health_monitor(services))
 
+        # 启动验证码令牌池
+        if services.captcha_pool is not None:
+            await services.captcha_pool.start()
+
         try:
             yield
         finally:
@@ -170,6 +185,8 @@ def create_app(
                     pass
             if services.managed_upstream_client is not None:
                 await services.managed_upstream_client.aclose()
+            if services.captcha_pool is not None:
+                await services.captcha_pool.stop()
 
     app = FastAPI(title="zai2api", lifespan=lifespan)
 

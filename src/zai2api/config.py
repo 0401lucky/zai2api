@@ -60,6 +60,9 @@ class Settings:
         "yes",
         "on",
     }
+    captcha_enabled: bool = os.getenv("CAPTCHA_ENABLED", "true").lower() not in {
+        "0", "false", "no", "off",
+    }
     account_poll_interval_seconds: int = int(os.getenv("ACCOUNT_POLL_INTERVAL_SECONDS", "300"))
     log_retention_days_env: int | None = (
         int(value) if (value := os.getenv("LOG_RETENTION_DAYS")) is not None else None
