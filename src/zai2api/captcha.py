@@ -212,27 +212,32 @@ class PlaywrightProvider(CaptchaProvider):
     """通过本地 Playwright 浏览器自动解决验证码。
 
     需要安装: pip install playwright && playwright install chromium
-    不适合 Docker 部署（镜像体积大、内存占用高）。
+    不适合资源受限的容器环境。
     """
 
     def __init__(self) -> None:
-        self._solver = None  # CaptchaSolver 实例，惰性加载
+        self._solver = None
         self._started = False
 
     async def start(self) -> None:
         if self._started:
             return
+        logger.info("正在初始化 Playwright 验证码供应商...")
         try:
             from ._captcha_playwright import CaptchaSolver
 
             self._solver = CaptchaSolver()
             await self._solver.start()
-            logger.info("Playwright 验证码供应商就绪")
+            logger.info("✅ Playwright 验证码供应商就绪，可自动解决滑块验证码")
             self._started = True
-        except ImportError:
-            logger.warning("Playwright 未安装，无法使用本地验证码解决")
+        except ImportError as exc:
+            logger.error(
+                "❌ Playwright 未安装！验证码自动解决不可用。"
+                "请运行: pip install playwright ddddocr numpy pillow && playwright install chromium"
+            )
+            logger.debug("ImportError 详情: %s", exc)
         except Exception as exc:
-            logger.warning("Playwright 验证码供应商初始化失败: %s", exc)
+            logger.error("❌ Playwright 验证码供应商初始化失败: %s。将无法自动解决验证码。", exc)
 
     async def stop(self) -> None:
         if self._solver:
